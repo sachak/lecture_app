@@ -2,16 +2,17 @@
 """
 Décision lexicale – 10 essais
 Aucune dépendance externe (Streamlit seulement)
+Compatible ≥ Streamlit 1.33 (st.rerun)
 """
 import time, uuid, pandas as pd, streamlit as st
 
-# --------- PARAMÈTRES --------------------------------------------------------
+# ---------- PARAMÈTRES -------------------------------------------------------
 TIME_LIMIT_MS = 2_000      # délai max pour répondre
 FIX_DUR       = 0.5        # « + » 500 ms
 BLANK_DUR     = 0.5        # blanc 500 ms
-TICK_SEC      = 0.05       # pas de rafraîchissement  (50 ms)
+TICK_SEC      = 0.05       # pas de rafraîchissement (50 ms)
 
-# --------- STIMULI -----------------------------------------------------------
+# ---------- STIMULI ----------------------------------------------------------
 stimuli = pd.DataFrame([
     # prime      cible        type            cond  cle (1=Mot,2=Non-mot)
     ["MEDECIN",  "INFIRMIER", "associés",      1,   1],
@@ -26,12 +27,11 @@ stimuli = pd.DataFrame([
     ["PLAME",    "VIN",       "non-mot",       3,   2],
 ], columns=["prime", "cible", "type", "cond", "cle"])
 
-# --------- ÉTAT PERSISTANT ---------------------------------------------------
+# ---------- ÉTAT PERSISTANT --------------------------------------------------
 def init_state():
     s = st.session_state
-    s.setdefault("page", 0)               # 0 = instructions, 1 = tâche, 2 = fin
-    # machine d’états
-    s.setdefault("trial",        0)       # index essai
+    s.setdefault("page", 0)               # 0 = instructions | 1 = tâche | 2 = fin
+    s.setdefault("trial",        0)       # index de l’essai courant
     s.setdefault("phase",        "fix")   # fix / blank / stim / fb
     s.setdefault("phase_start",  time.perf_counter())
     s.setdefault("stim_start",   0.0)
@@ -40,7 +40,7 @@ def init_state():
     s.setdefault("results",      [])
 init_state()
 
-# --------- OUTILS ------------------------------------------------------------
+# ---------- OUTILS -----------------------------------------------------------
 def reset_phase(new_phase):
     st.session_state.phase       = new_phase
     st.session_state.phase_start = time.perf_counter()
@@ -49,14 +49,12 @@ def log_trial(**kw):
     st.session_state.results.append(kw)
 
 def tick(and_run=True):
-    """
-    Petite pause puis relance le script – sert de « rafraîchissement ».
-    """
+    """Pause courte puis relance le script (boucle temps réel)."""
     time.sleep(TICK_SEC)
     if and_run:
-        st.experimental_rerun()
+        st.rerun()               # ← remplace experimental_rerun
 
-# --------- PAGE 0 : INSTRUCTIONS ---------------------------------------------
+# ---------- PAGE 0 : INSTRUCTIONS -------------------------------------------
 def page_instructions():
     st.set_page_config(page_title="Décision lexicale", page_icon="🔠")
     st.title("Décision lexicale – entraînement")
@@ -73,17 +71,17 @@ Séquence d’un essai :
 6. Nouvel essai (10 au total)
 """)
     if st.button("Commencer ➡️"):
-        st.session_state.page = 1
+        st.session_state.page  = 1
         st.session_state.trial = 0
         reset_phase("fix")
-        st.experimental_rerun()
+        st.rerun()
 
-# --------- PAGE 1 : TÂCHE ----------------------------------------------------
+# ---------- PAGE 1 : TÂCHE ---------------------------------------------------
 def page_task():
     i = st.session_state.trial
-    if i >= len(stimuli):                 # terminé → page fin
+    if i >= len(stimuli):                  # fin → page récap
         st.session_state.page = 2
-        st.experimental_rerun()
+        st.rerun()
         return
 
     prime, cible, typ, cond, cle_corr = stimuli.iloc[i]
@@ -96,7 +94,7 @@ def page_task():
                     unsafe_allow_html=True)
         if elapsed >= FIX_DUR:
             reset_phase("blank")
-        tick()                            # boucle tant que < 500 ms
+        tick()
 
     # 2) BLANC
     elif phase == "blank":
@@ -122,7 +120,7 @@ def page_task():
             if st.button("Non-mot ❌", key=f"non_{i}"):
                 clicked = 2
 
-        rt = int((time.perf_counter() - st.session_state.stim_start)*1000)
+        rt = int((time.perf_counter() - st.session_state.stim_start) * 1000)
 
         # a) réponse dans les temps
         if clicked is not None and rt <= TIME_LIMIT_MS:
@@ -130,10 +128,12 @@ def page_task():
             log_trial(prime=prime, cible=cible, type=typ, cond=cond,
                       cle_correcte=cle_corr, reponse=clicked,
                       rt=rt, too_slow=False, correcte=correct)
-            st.session_state.fb_msg = "correct!" if correct else "wrong response, or too slow!"
+            st.session_state.fb_msg = (
+                "correct!" if correct else "wrong response, or too slow!"
+            )
             st.session_state.fb_dur = 0.5 if correct else 1.5
             reset_phase("fb")
-            st.experimental_rerun()
+            st.rerun()
 
         # b) délai dépassé
         elif rt > TIME_LIMIT_MS:
@@ -143,23 +143,25 @@ def page_task():
             st.session_state.fb_msg = "wrong response, or too slow!"
             st.session_state.fb_dur = 1.5
             reset_phase("fb")
-            st.experimental_rerun()
+            st.rerun()
 
-        # c) pas encore cliqué, pas encore trop lent → attendre et relancer
+        # c) attente
         tick()
 
     # 4) FEEDBACK
     elif phase == "fb":
-        st.markdown(f"<h2 style='text-align:center'>{st.session_state.fb_msg}</h2>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            f"<h2 style='text-align:center'>{st.session_state.fb_msg}</h2>",
+            unsafe_allow_html=True
+        )
         if elapsed >= st.session_state.fb_dur:
             st.session_state.trial += 1
             reset_phase("fix")
-            st.experimental_rerun()
+            st.rerun()
         else:
-            tick()                        # attendre fin du feedback
+            tick()                         # attendre la fin du feedback
 
-# --------- PAGE 2 : FIN + CSV -----------------------------------------------
+# ---------- PAGE 2 : FIN + CSV ----------------------------------------------
 def page_end():
     st.title("Fin de l’entraînement – merci !")
     df = pd.DataFrame(st.session_state.results)
@@ -172,7 +174,7 @@ def page_end():
                        mime="text/csv")
     st.success("Vous pouvez fermer l’onglet.")
 
-# --------- ROUTAGE -----------------------------------------------------------
+# ---------- ROUTAGE ----------------------------------------------------------
 if st.session_state.page == 0:
     page_instructions()
 elif st.session_state.page == 1:
