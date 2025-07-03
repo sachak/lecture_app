@@ -1,53 +1,74 @@
 # -*- coding: utf-8 -*-
 """
-Décision lexicale – 10 essais
-(+) 500 ms → blanc 500 ms → 2 000 ms pour répondre → « Trop lent » si dépassement
-Streamlit uniquement – compatible ≥1.33  (st.rerun)
+Décision lexicale : détecter la présence d’un pseudo-mot
+18 essais : 9 « pseudo-mot présent », 9 « aucun pseudo-mot »
+Aucune dépendance externe – Streamlit ≥ 1.33
 """
-import time, uuid, pandas as pd, streamlit as st
+import time, uuid, random, pandas as pd, streamlit as st
 
-# ───────── PARAMÈTRES ────────────────────────────────────────────────────────
-TIME_LIMIT_MS = 2_000        # délai max pour répondre
-FIX_DUR       = 0.5          # « + » 500 ms
-BLANK_DUR     = 0.5          # blanc 500 ms
-TICK_SEC      = 0.05         # pas de rafraîchissement (50 ms)
+# ───────── LISTES DE MOTS ────────────────────────────────────────────────────
+PSEUDOS = [
+    "appendance", "arrancerai", "assoubiers", "caratillés", "cavartenne",
+    "caporenèse", "batistrale", "bâfrentade", "banonneuse"
+]
+WORDS = [
+    "appartenez", "appartenir", "appartiens", "bolivienne", "bolognaise",
+    "bombardais", "cascadeurs", "cascadeuse", "cascatelle"
+]
 
-# ───────── STIMULI ───────────────────────────────────────────────────────────
-stimuli = pd.DataFrame([
-    # prime      cible        type            cond  cle  (1 = Mot, 2 = Non-mot)
-    ["MEDECIN",  "INFIRMIER", "associés",      1,   1],
-    ["MEDECIN",  "FLIPO",     "non-mot",       3,   2],
-    ["ARBRE",    "MEDECIN",   "non-associés",  2,   1],
-    ["MEDECIN",  "INFIRMIER", "non-associés",  2,   1],
-    ["MEDECIN",  "FLIPO",     "non-mot",       3,   2],
-    ["BEURRE",   "PAIN",      "associés",      1,   1],
-    ["PAIN",     "MEDECIN",   "non-associés",  2,   1],
-    ["SOAM",     "GANT",      "non-mot",       3,   2],
-    ["NART",     "TRIEF",     "non-mot",       3,   2],
-    ["PLAME",    "VIN",       "non-mot",       3,   2],
-], columns=["prime", "cible", "type", "cond", "cle"])
+# ───────── PARAMÈTRES TEMPORELS (s / ms) ─────────────────────────────────────
+TIME_LIMIT_MS = 2000
+FIX_DUR       = 0.5
+BLANK_DUR     = 0.5
+TICK_SEC      = 0.05            # rafraîchissement interne (50 ms)
 
-# ───────── ÉTAT STREAMLIT ────────────────────────────────────────────────────
+# ───────── GÉNÉRATION DES 18 ESSAIS ──────────────────────────────────────────
+def build_trials():
+    trials = []
+
+    # 1) 9 essais avec pseudo-mot
+    for pseudo in PSEUDOS:
+        word = random.choice(WORDS)
+        if random.random() < .5:
+            w1, w2 = pseudo, word
+        else:
+            w1, w2 = word, pseudo
+        trials.append(dict(w1=w1, w2=w2, has_pseudo=True, cle=2))
+
+    # 2) 9 essais « aucun pseudo-mot »
+    for _ in range(9):
+        w1, w2 = random.sample(WORDS, 2)
+        trials.append(dict(w1=w1, w2=w2, has_pseudo=False, cle=1))
+
+    random.shuffle(trials)
+    return pd.DataFrame(trials)
+
+# construit une fois au premier run
+if "stimuli" not in st.session_state:
+    st.session_state.stimuli = build_trials()
+
+# ───────── INITIALISATION ÉTAT STREAMLIT ─────────────────────────────────────
 def init_state():
     s = st.session_state
-    s.setdefault("page", 0)               # 0=instr, 1=tâche, 2=fin
-    s.setdefault("trial", 0)              # index essai
-    s.setdefault("phase", "fix")          # fix | blank | stim | fb
+    s.setdefault("page", 0)             # 0=instr  1=tâche  2=fin
+    s.setdefault("trial", 0)
+    s.setdefault("phase", "fix")        # fix | blank | stim | fb
     s.setdefault("phase_start", time.perf_counter())
     s.setdefault("stim_start", 0.0)
     s.setdefault("results", [])
-    s.setdefault("fb_msg", "")
-    s.setdefault("fb_dur", 0.0)
+    s.setdefault("fb_timer", 0.0)       # pour « Trop lent »
 init_state()
 
-# ───────── OUTILS ────────────────────────────────────────────────────────────
+stimuli = st.session_state.stimuli     # raccourci
+
+# ───────── OUTILS GÉNÉRIQUES ────────────────────────────────────────────────
 def reset_phase(p):
     st.session_state.phase = p
     st.session_state.phase_start = time.perf_counter()
 
-def tick(run=True):
+def tick(rerun=True):
     time.sleep(TICK_SEC)
-    if run:
+    if rerun:
         st.rerun()
 
 def log_trial(**kw):
@@ -55,18 +76,20 @@ def log_trial(**kw):
 
 # ───────── PAGE 0 : INSTRUCTIONS ─────────────────────────────────────────────
 def page_instructions():
-    st.set_page_config(page_title="Décision lexicale", page_icon="🔠")
-    st.title("Décision lexicale – entraînement")
+    st.set_page_config(page_title="Décision lexicale", page_icon="🔡")
+    st.title("Décision lexicale")
     st.markdown("""
-Cycle de chaque essai :
+Sur chaque essai :
 
-1. « + » 500 ms → 2. écran blanc 500 ms  
-3. Deux mots : décidez si **le second est un mot français**  
- • bouton Mot (touche A) • bouton Non-mot (touche L)  
-4. 2 s maximum pour répondre  
-5. Si vous dépassez 2 s : *Trop lent* (1 500 ms) puis essai suivant.  
+1. « + » 500 ms → 2. écran blanc 500 ms  
+3. Deux mots : indiquez s’il existe **au moins un pseudo-mot**  
+   • bouton « Seulement des mots » (touche A)  
+   • bouton « Pseudo-mot présent » (touche L)  
+4. 2 s pour répondre  
+5. Si vous êtes trop lent, l’avertissement *Trop lent* s’affiche 1 500 ms.  
 
-(10 essais au total, aucune indication de bonne/mauvaise réponse.)
+Aucune information sur l’exactitude n’est donnée.  
+Appuyez sur le bouton pour commencer (18 essais).
 """)
     if st.button("Commencer ➡️"):
         st.session_state.page = 1
@@ -74,19 +97,21 @@ Cycle de chaque essai :
         reset_phase("fix")
         st.rerun()
 
-# ───────── PAGE 1 : TÂCHE ────────────────────────────────────────────────────
+# ───────── PAGE 1 : BOUCLE TÂCHE ─────────────────────────────────────────────
 def page_task():
     i = st.session_state.trial
-    if i >= len(stimuli):                       # terminé
+    if i >= len(stimuli):             # tous les essais terminés
         st.session_state.page = 2
         st.rerun()
         return
 
-    prime, cible, typ, cond, cle_corr = stimuli.iloc[i]
+    row = stimuli.iloc[i]
+    w1, w2, cle_corr = row.w1, row.w2, row.cle
+
     phase   = st.session_state.phase
     elapsed = time.perf_counter() - st.session_state.phase_start
 
-    # 1. FIXATION
+    # 1) FIXATION
     if phase == "fix":
         st.markdown("<h1 style='text-align:center'>+</h1>",
                     unsafe_allow_html=True)
@@ -94,7 +119,7 @@ def page_task():
             reset_phase("blank")
         tick()
 
-    # 2. BLANC
+    # 2) BLANC
     elif phase == "blank":
         st.empty()
         if elapsed >= BLANK_DUR:
@@ -102,54 +127,51 @@ def page_task():
             st.session_state.stim_start = time.perf_counter()
         tick()
 
-    # 3. STIMULI (décision)
+    # 3) STIMULI
     elif phase == "stim":
         st.markdown(
-            f"<div style='text-align:center;font-size:42px;line-height:1.2'>"
-            f"{prime}<br>{cible}</div>",
-            unsafe_allow_html=True
+            f"<div style='text-align:center;font-size:40px;line-height:1.2'>"
+            f"{w1}<br>{w2}</div>", unsafe_allow_html=True
         )
-        col_mot, col_non = st.columns(2)
+
+        col_ok, col_pseudo = st.columns(2)
         clicked = None
-        with col_mot:
-            if st.button("Mot ✔️", key=f"mot_{i}"):
+        with col_ok:
+            if st.button("Seulement des mots ✔️", key=f"ok_{i}"):
                 clicked = 1
-        with col_non:
-            if st.button("Non-mot ❌", key=f"non_{i}"):
+        with col_pseudo:
+            if st.button("Pseudo-mot présent ❌", key=f"pseudo_{i}"):
                 clicked = 2
 
         rt = int((time.perf_counter() - st.session_state.stim_start) * 1000)
 
-        # a) réponse dans les temps → essai suivant sans feedback
+        # a) réponse dans le temps
         if clicked is not None and rt <= TIME_LIMIT_MS:
             correct = clicked == cle_corr
-            log_trial(prime=prime, cible=cible, type=typ, cond=cond,
-                      cle_correcte=cle_corr, reponse=clicked,
-                      rt=rt, too_slow=False, correcte=correct)
+            log_trial(w1=w1, w2=w2, has_pseudo=row.has_pseudo,
+                      reponse=clicked, rt=rt,
+                      correcte=correct, too_slow=False)
             st.session_state.trial += 1
             reset_phase("fix")
             st.rerun()
 
-        # b) délai dépassé → feedback "Trop lent"
+        # b) délai dépassé
         elif rt > TIME_LIMIT_MS:
-            log_trial(prime=prime, cible=cible, type=typ, cond=cond,
-                      cle_correcte=cle_corr, reponse=None,
-                      rt=rt, too_slow=True, correcte=False)
-            st.session_state.fb_msg = "Trop lent"
-            st.session_state.fb_dur = 1.5
+            log_trial(w1=w1, w2=w2, has_pseudo=row.has_pseudo,
+                      reponse=None, rt=rt,
+                      correcte=False, too_slow=True)
+            st.session_state.fb_timer = 1.5
             reset_phase("fb")
             st.rerun()
 
         # c) attente continue
         tick()
 
-    # 4. FEEDBACK « Trop lent »
+    # 4) FEEDBACK « Trop lent »
     elif phase == "fb":
-        st.markdown(
-            f"<h2 style='text-align:center'>{st.session_state.fb_msg}</h2>",
-            unsafe_allow_html=True
-        )
-        if elapsed >= st.session_state.fb_dur:
+        st.markdown("<h2 style='text-align:center'>Trop lent</h2>",
+                    unsafe_allow_html=True)
+        if elapsed >= st.session_state.fb_timer:
             st.session_state.trial += 1
             reset_phase("fix")
             st.rerun()
@@ -158,14 +180,13 @@ def page_task():
 
 # ───────── PAGE 2 : FIN + CSV ────────────────────────────────────────────────
 def page_end():
-    st.title("Fin de l’entraînement – merci !")
+    st.title("Fin – merci pour votre participation !")
     df = pd.DataFrame(st.session_state.results)
     st.dataframe(df)
-    csv_bytes = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+    name = f"{uuid.uuid4()}_lexicale.csv"
     st.download_button("📥 Télécharger le CSV",
-                       data=csv_bytes,
-                       file_name=f"{uuid.uuid4()}_lexicale.csv",
-                       mime="text/csv")
+                       data=df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'),
+                       file_name=name, mime="text/csv")
     st.success("Vous pouvez fermer l’onglet.")
 
 # ───────── ROUTAGE ───────────────────────────────────────────────────────────
