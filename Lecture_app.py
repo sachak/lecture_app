@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Mini-expérience « Décision lexicale » (10 essais)
+Décision lexicale – 10 essais d’entraînement
 timeline : + 500 ms → blanc 500 ms → mots (≤2 s) → feedback → essai suivant
-enregistre : prime, cible, type, cond, réponse, RT, correcte, too_slow
+enregistrement : prime, cible, type, cond, réponse, RT, correcte, too_slow
+Aucune dépendance externe (tout est fait avec Streamlit + JS « setTimeout »)
 """
 import time, uuid, pandas as pd, streamlit as st
-from streamlit_autorefresh import st_autorefresh   # ← pour le timeout
 
 st.set_page_config(page_title="Décision lexicale", page_icon="🔠")
 
-# ─────────────────────────── PARAMÈTRES ──────────────────────────────────────
-TIME_LIMIT   = 2000                # délai maxi pour répondre (ms)
-FIX_DUR      = 0.5                 # durée « + » (s)
-BLANK_DUR    = 0.5                 # durée blanc (s)
-REFRESH_MS   = 50                  # intervalle auto-refresh (ms)
+# ───────────────────────────── PARAMÈTRES ────────────────────────────────────
+TIME_LIMIT_MS = 2000       # délai maximum pour répondre (2 000 ms)
+FIX_DUR       = 0.5        # « + » 500 ms
+BLANK_DUR     = 0.5        # blanc 500 ms
+REFRESH_MS    = 50         # période de rafraîchissement automatique (ms)
 
-# ─────────────────────────── STIMULI ─────────────────────────────────────────
+# ───────────────────────────── STIMULI ───────────────────────────────────────
 stimuli = pd.DataFrame([
-    # prime      cible        type            cond  cle (1=Mot, 2=Non-mot)
+    # prime      cible        type            cond  cle (1=Mot,2=Non-mot)
     ["MEDECIN",  "INFIRMIER", "associés",      1,   1],
     ["MEDECIN",  "FLIPO",     "non-mot",       3,   2],
     ["ARBRE",    "MEDECIN",   "non-associés",  2,   1],
@@ -30,21 +30,35 @@ stimuli = pd.DataFrame([
     ["PLAME",    "VIN",       "non-mot",       3,   2],
 ], columns=["prime", "cible", "type", "cond", "cle"])
 
-# ─────────────────────────── ÉTAT GLOBAL ─────────────────────────────────────
+# ───────────────────────────── ÉTAT PERSISTANT ───────────────────────────────
 def init_state():
     s = st.session_state
-    s.setdefault("page",         0)          # 0 = instructions, 1 = tâche, 2 = fin
-    # Tâche
-    s.setdefault("trial",        0)          # index essai
-    s.setdefault("phase",        "fix")      # fix → blank → stim → fb
+    s.setdefault("page", 0)               # 0 = instructions, 1 = tâche, 2 = fin
+    # machine d’états pour la tâche
+    s.setdefault("trial",        0)       # index essai courant
+    s.setdefault("phase",        "fix")   # fix / blank / stim / fb
     s.setdefault("phase_start",  time.perf_counter())
-    s.setdefault("rt_start",     0.0)        # horodatage apparition stimuli
-    s.setdefault("fb_msg",       "")         # texte feedback
-    s.setdefault("fb_dur",       0.0)        # durée du feedback
-    s.setdefault("results",      [])         # log complet
+    s.setdefault("stim_start",   0.0)     # horodatage apparition mots
+    s.setdefault("fb_msg",       "")
+    s.setdefault("fb_dur",       0.0)
+    s.setdefault("results",      [])      # liste des essais
 init_state()
 
-# ─────────────────────────── OUTILS ──────────────────────────────────────────
+# ───────────────────────────── AUTORELOAD JS (aucune lib externe) ────────────
+def auto_refresh(interval_ms=50):
+    """
+    Injecte un petit script JS qui recharge la page après `interval_ms`.
+    À appeler seulement pendant les phases où le temps compte.
+    """
+    st.markdown(
+        f"""<script>
+               setTimeout(function(){{window.location.reload();}},
+                          {interval_ms});
+            </script>""",
+        unsafe_allow_html=True
+    )
+
+# ───────────────────────────── OUTILS ────────────────────────────────────────
 def reset_phase(new_phase):
     st.session_state.phase       = new_phase
     st.session_state.phase_start = time.perf_counter()
@@ -52,68 +66,69 @@ def reset_phase(new_phase):
 def log_trial(**kw):
     st.session_state.results.append(kw)
 
-# ─────────────────────────── PAGE 0 : INSTRUCTIONS ───────────────────────────
+# ───────────────────────────── PAGE 0 : INSTRUCTIONS ─────────────────────────
 def page_instructions():
-    st.title("Décision lexicale – entraînement 10 essais")
+    st.title("Décision lexicale – entraînement")
     st.markdown("""
-Sur chaque essai :
+Séquence d’un essai :
 
-1. Un « + » pendant 500 ms  
-2. Un écran blanc 500 ms  
-3. Deux mots – décidez si **le second est un mot français**  
-   • touche « A » ou bouton **Mot**  
-   • touche « L » ou bouton **Non-mot**  
+1. « + » 500 ms  
+2. Blanc 500 ms  
+3. Deux mots : décidez si **le second est un mot français**  
+   • bouton **Mot** (*A*)  
+   • bouton **Non-mot** (*L*)  
 4. 2 s maximum pour répondre  
-5. *correct!* 500 ms **ou** *wrong response, or too slow!* 1500 ms  
+5. *correct!* 500 ms **ou** *wrong response, or too slow!* 1 500 ms  
 6. Nouvel essai
 
-Répondez le plus vite et le plus justement possible.
+Cliquez sur le bouton pour démarrer (10 essais).
 """)
     if st.button("Commencer ➡️"):
         st.session_state.page = 1
+        # remise à zéro des marqueurs
+        st.session_state.trial = 0
         reset_phase("fix")
         st.experimental_rerun()
 
-# ─────────────────────────── PAGE 1 : TÂCHE ──────────────────────────────────
+# ───────────────────────────── PAGE 1 : TÂCHE ────────────────────────────────
 def page_task():
     i = st.session_state.trial
-    if i >= len(stimuli):                       # fini → page récap
+    if i >= len(stimuli):                # tous les essais faits → page fin
         st.session_state.page = 2
         st.experimental_rerun()
         return
 
-    # petit « tick » toutes REFRESH_MS pour gérer les délais
-    st_autorefresh(interval=REFRESH_MS, key="refresh")
+    # rafraîchissement automatique tant qu’on est dans la tâche
+    auto_refresh(REFRESH_MS)
 
     prime, cible, typ, cond, cle_corr = stimuli.iloc[i]
-    phase = st.session_state.phase
-    now   = time.perf_counter()
-    elapsed = now - st.session_state.phase_start
+    phase   = st.session_state.phase
+    elapsed = time.perf_counter() - st.session_state.phase_start
 
-    # ───────────────  PHASE 1 : FIXATION  (+)  ────────────────
+    # ───────────── 1. FIXATION « + » ─────────────
     if phase == "fix":
         st.markdown("<h1 style='text-align:center'>+</h1>",
                     unsafe_allow_html=True)
         if elapsed >= FIX_DUR:
             reset_phase("blank")
 
-    # ───────────────  PHASE 2 : BLANC  ────────────────────────
+    # ───────────── 2. BLANC ──────────────────────
     elif phase == "blank":
-        st.empty()                            # écran vide
+        st.empty()
         if elapsed >= BLANK_DUR:
             reset_phase("stim")
-            st.session_state.rt_start = time.perf_counter()
+            st.session_state.stim_start = time.perf_counter()
 
-    # ───────────────  PHASE 3 : STIMULI  ──────────────────────
+    # ───────────── 3. STIMULI (≤ 2 s) ────────────
     elif phase == "stim":
-        # Affichage deux lignes centrées
+        # affichage des deux mots
         st.markdown(
             f"<div style='text-align:center;font-size:42px;line-height:1.2'>"
             f"{prime}<br>{cible}</div>",
             unsafe_allow_html=True
         )
 
-        # boutons / touches
+        # boutons de réponse
         col_mot, col_non = st.columns(2)
         clicked = None
         with col_mot:
@@ -123,10 +138,10 @@ def page_task():
             if st.button("Non-mot ❌", key=f"non_{i}"):
                 clicked = 2
 
-        rt = int((time.perf_counter() - st.session_state.rt_start) * 1000)
+        rt = int((time.perf_counter() - st.session_state.stim_start) * 1000)
 
-        # 1) CLIC pendant la fenêtre de 2 s
-        if clicked is not None and rt <= TIME_LIMIT:
+        # 3-A) clic dans le temps
+        if clicked is not None and rt <= TIME_LIMIT_MS:
             correct = clicked == cle_corr
             log_trial(prime=prime, cible=cible, type=typ, cond=cond,
                       cle_correcte=cle_corr, reponse=clicked,
@@ -135,8 +150,8 @@ def page_task():
             st.session_state.fb_dur = 0.5 if correct else 1.5
             reset_phase("fb")
 
-        # 2) Aucune réponse et délai dépassé
-        elif rt > TIME_LIMIT:
+        # 3-B) délai dépassé
+        elif rt > TIME_LIMIT_MS:
             log_trial(prime=prime, cible=cible, type=typ, cond=cond,
                       cle_correcte=cle_corr, reponse=None,
                       rt=rt, too_slow=True, correcte=False)
@@ -144,27 +159,29 @@ def page_task():
             st.session_state.fb_dur = 1.5
             reset_phase("fb")
 
-    # ───────────────  PHASE 4 : FEEDBACK  ─────────────────────
+    # ───────────── 4. FEEDBACK ───────────────────
     elif phase == "fb":
         st.markdown(f"<h2 style='text-align:center'>{st.session_state.fb_msg}</h2>",
                     unsafe_allow_html=True)
         if elapsed >= st.session_state.fb_dur:
-            st.session_state.trial += 1
-            reset_phase("fix")               # essai suivant
+            st.session_state.trial += 1      # prochain essai
+            reset_phase("fix")
 
-# ─────────────────────────── PAGE 2 : RÉCAP & CSV ────────────────────────────
+# ───────────────────────────── PAGE 2 : FIN + CSV ────────────────────────────
 def page_end():
-    st.title("Fin de l’entraînement")
+    st.title("Fin de l’entraînement – merci !")
+
     df = pd.DataFrame(st.session_state.results)
     st.dataframe(df)
 
     csv = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-    st.download_button("📥 Télécharger le CSV", data=csv,
+    st.download_button("📥 Télécharger le CSV",
+                       data=csv,
                        file_name=f"{uuid.uuid4()}_lexicale.csv",
                        mime="text/csv")
-    st.success("Merci ! Vous pouvez fermer l’onglet.")
+    st.success("Vous pouvez fermer l’onglet.")
 
-# ─────────────────────────── ROUTAGE ─────────────────────────────────────────
+# ───────────────────────────── ROUTAGE ───────────────────────────────────────
 if st.session_state.page == 0:
     page_instructions()
 elif st.session_state.page == 1:
