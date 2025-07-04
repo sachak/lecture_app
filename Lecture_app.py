@@ -1,8 +1,12 @@
+# -*- coding: utf-8 -*-
 """
-Page 2 : protocole complet de l’Experiment 3
-Alternance mot/masque (cycle 350 ms) ; +14 ms sur le mot à chaque cycle.
-Le participant appuie ESPACE → champ-réponse → Entrée → essai suivant.
-Un CSV « results.csv » est proposé à la fin.
+Expérience 3 – Masquage progressif d'un mot.
+1. Page d'instructions.
+2. Après clic sur "Démarrer", bascule automatique vers l'expérience.
+   – Mot + masque alternés dans des cycles de 350 ms.
+   – Le mot gagne 14 ms et le masque en perd 14 ms à chaque cycle.
+   – ESPACE = mot reconnu  ➜ champ-réponse (Entrée pour valider).
+   – Fin : téléchargement d’un CSV (mot, RT, réponse).
 """
 
 import json
@@ -10,12 +14,8 @@ import random
 import streamlit as st
 import streamlit.components.v1 as components
 
-# ─────────────────── 1. PARAMÈTRES EXPÉRIMENTAUX ────────────────────
-CYCLE_MS   = 350   # durée d’un cycle mot+masque
-START_MS   = 14    # affichage du mot au premier cycle
-STEP_MS    = 14    # augmentation par cycle
-
-# Liste de 80 mots (exemples — à remplacer par votre matériel)
+# ────────────────────── PARAMÈTRES GÉNÉRAUX ────────────────────────
+# 80 mots d'exemple (mettez vos propres stimuli)
 STIMULI = [
     "DOIGT","TABLE","CHAISE","MAISON","VOITURE","CHEVAL","OISEAU","BOUTEILLE",
     "MONTAGNE","RIVIERE","PLANTE","POMME","CHIEN","CHAT","MUSIQUE","PARAPLUIE",
@@ -26,56 +26,92 @@ STIMULI = [
     "MER","OCEAN","SABLE","FORET","ARBRE","FLEUR","SOLEIL","LUNE",
     "ETOILE","NEIGE","GLACE","PLUIE","VENT","ORAGE","COEUR","SANG",
     "TETE","MAIN","PIED","JAMBON","FROMAGE","BEURRE","PAIN","SUCRE",
-    "MARCHÉ","VILLAGE","VITAMINE","BASKET","SPORT","ECOLE","EXAMEN","UNIVERS",
+    "MARCHE","VILLAGE","VITAMINE","BASKET","SPORT","ECOLE","EXAMEN","UNIVERS"
 ]
-random.shuffle(STIMULI)          # ordre aléatoire pour chaque participant
+random.shuffle(STIMULI)                  # ordre aléatoire pour chaque participant
 
-# ─────────────────── 2. MISE EN PLEIN ÉCRAN (CSS) ───────────────────
+CYCLE_MS = 350      # durée complète mot+masque
+START_MS = 14       # mot à 14 ms au 1er cycle
+STEP_MS  = 14       # +14 ms par cycle pour le mot (le masque perd 14 ms)
+
+# ────────────────────────── CONFIG PAGE ───────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 
-hide_streamlit_style = """
+# Cache barre latérale, menu, footer pour la phase « expérience »
+HIDE_STREAMLIT_CSS = """
 <style>
-/* on masque menu, footer, barre latérale */
 #MainMenu, header, footer {visibility: hidden;}
-.css-1d391kg {display: none;}   /* barre latérale (class Streamlit) */
+.css-1d391kg {display: none;}      /* barre latérale */
 </style>
 """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# ─────────────────── 3. HTML + JavaScript embarqués ─────────────────
-html_code = f"""
+# ─────────────────────── GESTION DES « PAGES » ─────────────────────
+if "stage" not in st.session_state:
+    st.session_state.stage = "intro"      # intro  →  experiment
+
+# ────────────────────────── PAGE INTRO ────────────────────────────
+if st.session_state.stage == "intro":
+    st.title("EXPERIMENT 3 : reconnaissance de mots masqués")
+
+    st.markdown("""
+Bienvenue !
+
+Vous verrez un mot très brièvement affiché au centre de l’écran, alternant avec un masque de **#####**.  
+À chaque cycle de 350 ms :
+• le mot reste **14 ms de plus**.  
+• le masque reste **14 ms de moins**.
+
+Procédure :
+1. Fixez le centre de l’écran.  
+2. Appuyez sur **ESPACE** dès que vous reconnaissez le mot.  
+3. Un champ apparaît : tapez le mot reconnu puis validez avec **Entrée**.  
+
+Cliquez sur le bouton ci-dessous pour commencer l’expérience.
+""")
+
+    if st.button("Démarrer l’expérience"):
+        st.session_state.stage = "experiment"
+        st.experimental_rerun()
+
+# ─────────────────────── PAGE EXPÉRIENCE ───────────────────────────
+elif st.session_state.stage == "experiment":
+    st.markdown(HIDE_STREAMLIT_CSS, unsafe_allow_html=True)
+
+    # Code HTML + JavaScript inséré dans Streamlit
+    html_code = f"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
 <style>
  html,body {{
-     height:100%; margin:0;
-     display:flex; align-items:center; justify-content:center;
-     background:white; font-family:'Courier New',monospace;
+    height:100%; margin:0;
+    display:flex; align-items:center; justify-content:center;
+    background:white; font-family:'Courier New',monospace;
  }}
- #screen {{ font-size:60px; user-select:none; }}
- #answer {{ display:none; font-size:48px; width:60%; text-align:center; }}
-</style></head><body>
-<div id="screen"></div>
-<input id="answer" autocomplete="off" />
+ #screen  {{ font-size:60px; user-select:none; }}
+ #answer  {{ display:none; font-size:48px; width:60%; text-align:center; }}
+</style>
+</head><body>
+  <div id="screen"></div>
+  <input id="answer" autocomplete="off" />
 <script>
-/**********************************************************************
- * PARAMÈTRES REÇUS DE PYTHON
- *********************************************************************/
-const WORDS   = {json.dumps(STIMULI)};    // liste des mots
-const CYCLE   = {CYCLE_MS};               // 350 ms
-const START   = {START_MS};               // 14 ms
-const STEP    = {STEP_MS};                // +14 ms / cycle
+/*********************************************************************
+ * Paramètres transmis par Python
+ ********************************************************************/
+const WORDS = {json.dumps(STIMULI)};      // liste des mots
+const CYCLE = {CYCLE_MS};                 // 350 ms
+const START = {START_MS};                 // 14 ms
+const STEP  = {STEP_MS};                  // +14 ms / cycle
 
-/**********************************************************************
- * VARIABLES GLOBALES
- *********************************************************************/
-let idx = 0;                      // indice du mot courant
-let results = [];                 // stockage réponses
+/*********************************************************************
+ * Variables globales
+ ********************************************************************/
+let idx = 0;                              // indice du mot courant
+let results = [];                         // stockage des résultats
 const scr = document.getElementById("screen");
 const ans = document.getElementById("answer");
 
-/**********************************************************************
- * FONCTION QUI GÈRE UN ESSAI
- *********************************************************************/
+/*********************************************************************
+ * Lance un essai
+ ********************************************************************/
 function runTrial() {{
   if (idx >= WORDS.length) {{ endExperiment(); return; }}
 
@@ -84,30 +120,29 @@ function runTrial() {{
 
   let stimDur = START;
   let maskDur = CYCLE - stimDur;
-  let startTime = performance.now();
+  let t0 = performance.now();
   let cycling = true;
 
-  // ---------- boucle mot / masque ----------
-  function cycle() {{
+  function oneCycle() {{
     scr.textContent = word;
     setTimeout(() => {{
       scr.textContent = mask;
       setTimeout(() => {{
         if (cycling) {{
           stimDur += STEP;
-          maskDur  = Math.max(0, CYCLE - stimDur);
-          cycle();
+          maskDur = Math.max(0, CYCLE - stimDur);
+          oneCycle();
         }}
       }}, maskDur);
     }}, stimDur);
   }}
-  cycle();
+  oneCycle();
 
-  // ---------- appui sur ESPACE ----------
+  // ── ESPACE = mot reconnu ───────────────────────────────────────
   function onSpace(ev) {{
     if (ev.code === "Space" && cycling) {{
       cycling = false;
-      const rt = Math.round(performance.now() - startTime);
+      const rt = Math.round(performance.now() - t0);
       window.removeEventListener("keydown", onSpace);
 
       scr.textContent = "";
@@ -115,7 +150,7 @@ function runTrial() {{
       ans.value = "";
       ans.focus();
 
-      // ---------- validation par Entrée ----------
+      // ── Entrée = validation de la réponse ─────────────────────
       ans.addEventListener("keydown", function onEnter(e) {{
         if (e.key === "Enter") {{
           e.preventDefault();
@@ -131,9 +166,9 @@ function runTrial() {{
   window.addEventListener("keydown", onSpace);
 }}
 
-/**********************************************************************
- * FIN D’EXPÉRIENCE : création du CSV + lien de téléchargement
- *********************************************************************/
+/*********************************************************************
+ * Fin d’expérience → CSV téléchargeable
+ ********************************************************************/
 function endExperiment() {{
   scr.style.fontSize = "40px";
   scr.textContent = "Merci ! L’expérience est terminée.";
@@ -143,16 +178,18 @@ function endExperiment() {{
   const blob   = new Blob([header + rows], {{type: "text/csv"}});
   const url    = URL.createObjectURL(blob);
 
-  const link = document.createElement("a");
-  link.href = url; link.download = "results.csv";
-  link.textContent = "Télécharger les résultats";
-  link.style.fontSize = "32px"; link.style.marginTop = "30px";
-  document.body.appendChild(link);
+  const a = document.createElement("a");
+  a.href = url; a.download = "results.csv";
+  a.textContent = "Télécharger les résultats";
+  a.style.fontSize = "32px";
+  a.style.marginTop = "30px";
+  document.body.appendChild(a);
 }}
 
-runTrial();            // on démarre le tout
-</script></body></html>
-"""
+runTrial();        // démarrage de la première présentation
+</script>
+</body></html>
+    """
 
-# ─────────────────── 4. AFFICHAGE DANS STREAMLIT ────────────────────
-components.html(html_code, height=650, width=1100, scrolling=False)
+    # Affichage du bloc HTML/JS dans Streamlit
+    components.html(html_code, height=650, width=1100, scrolling=False)
