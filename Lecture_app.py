@@ -1,133 +1,171 @@
-# -*- coding: utf-8 -*-
+import json
+import streamlit as st
+import streamlit.components.v1 as components
+
+###############################################################################
+# 1. PARAMÈTRES EXPÉRIMENTAUX – à adapter si besoin
+###############################################################################
+STIMULI = [
+    # Les 80 mots d’Experiments 1-2  (exemple)
+    "Doigt", "Table", "Chaise", "Maison", "Voiture", "Cheval", "Oiseau", "Bouteille",
+    # … complétez jusqu’à 80 …
+]
+
+CYCLE_LEN_MS   = 350      # durée d’un cycle complet mot+masque
+STIM_START_MS  = 14       # 14 ms au premier cycle
+STIM_STEP_MS   = 14       # +14 ms à chaque cycle
+
+###############################################################################
+# 2. INTERFACE STREAMLIT
+###############################################################################
+st.set_page_config(page_title="Expérience masquage visuel – Expe 3", layout="centered")
+st.title("EXPERIMENT 3 – reconnaissance visuelle de mots masqués")
+st.markdown(
 """
-Progressive-demasking (Streamlit + JS)
-• Aucune zone de réponse avant Espace
-• Zone supprimée juste après Entrée
+Appuyez sur **Espace** dès que vous reconnaissez le mot.  
+Le champ réponse s’affichera alors ; tapez le mot, validez par **Entrée**.  
+Essayez d’être rapide *et* précis.  
 """
-import json, random, uuid, pandas as pd, streamlit as st
-import streamlit.components.v1 as cpn
+)
 
-# ─── paramètres ─────────────────────────────────────────────
-CYCLE_MS, STEP_MS, MASK = 350, 14, "#"
-WORDS = ["AVION","BALAI","CARTE","CHAUD","CRANE","GARDE","LIVRE","MERCI",
-         "NAGER","PARLE","PORTE","PHOTO","RADIO","ROULE","SALON","SUCRE",
-         "TABLE","TIGRE","VIVRE","VOILE"]
-random.shuffle(WORDS)
+if "started" not in st.session_state:
+    st.session_state.started = False
 
-# ─── état session ──────────────────────────────────────────
-s = st.session_state
-if "page" not in s:
-    s.page, s.idx, s.phase = "intro", 0, "js"   # phases : js ▸ typing
-    s.rt, s.data           = None, []
-    s.box                  = st.empty()         # placeholder permanent
-
-# ─── champ caché JS → Python (invisible) ──────────────────
-st.markdown("<style>#receiver{display:none}</style>", unsafe_allow_html=True)
-hidden = st.text_input("", key="receiver", label_visibility="collapsed")
-
-# ─── gabarit JS (accolades doublées) ──────────────────────
-JS_TPL = """
-<div id='stim' style='font-size:64px;text-align:center;
-                      font-family:monospace;margin-top:25vh;'></div>
-<script>
-const WORD  = "{w}";
-const MASK  = "{m}";
-const CYCLE = {c};
-const STEP  = {s};
-
-let start = performance.now();
-let stop  = false;
-let rafID = null;
-const div = document.getElementById('stim');
-
-function flip(ts) {{
-  if(stop) return;
-  const e = ts - start;
-  const i = Math.floor(e / CYCLE);
-  const d = Math.min(STEP * (i + 1), CYCLE);
-  div.textContent = (e % CYCLE) < d ? WORD : MASK;
-  rafID = requestAnimationFrame(flip);
-}}
-rafID = requestAnimationFrame(flip);
-
-function finish() {{
-  stop = true;
-  cancelAnimationFrame(rafID);
-  div.remove();
-  const rt = Math.round(performance.now() - start);
-  const tgt = window.parent.document.getElementById('receiver');
-  if(tgt) {{
-      tgt.value = JSON.stringify({{rt: rt}});
-      tgt.dispatchEvent(new Event('input', {{bubbles: true}}));
-  }}
-}}
-
-document.addEventListener('keydown', e => {{
-  if(e.code === 'Space' || e.key === ' ') finish();
-}});
-</script>
-""".replace("{","{{").replace("}","}}")  # on double toutes les accolades
-# puis on remet les champs utiles (w,m,c,s) en simple accolade
-JS_TPL = JS_TPL.replace("{{w}}","{w}").replace("{{m}}","{m}") \
-               .replace("{{c}}","{c}").replace("{{s}}","{s}")
-
-def show_js(word: str):
-    html = JS_TPL.format(w=word,
-                         m=MASK*len(word),
-                         c=CYCLE_MS,
-                         s=STEP_MS)
-    cpn.html(html, height=400, scrolling=False)
-
-# ─── pages ────────────────────────────────────────────────
-def page_intro():
-    st.title("Tâche de dévoilement progressif")
-    st.write("1. Le mot se dévoile progressivement.\n"
-             "2. Appuyez sur **Espace** dès que vous le reconnaissez.\n"
-             "3. Tapez le mot puis **Entrée**.")
-    if st.button("Démarrer"):
-        s.page, s.phase = "trial", "js"
+if not st.session_state.started:
+    if st.button("Démarrer l’expérience"):
+        st.session_state.started = True
         st.experimental_rerun()
+    st.stop()
 
-def page_trial():
-    if s.idx >= len(WORDS):
-        s.page = "end"; st.experimental_rerun(); return
-    word = WORDS[s.idx]
+###############################################################################
+# 3. CONSTRUCTION DU BLOC HTML + JavaScript
+###############################################################################
+stim_json  = json.dumps([w.upper() for w in STIMULI])  # transmissible à JS
+html_code  = f"""
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+    body,html         {{ margin:0; height:100%; display:flex;
+                         justify-content:center; align-items:center;
+                         font-family: 'Courier New', monospace; }}
+    #disp             {{ font-size:48px; user-select:none; }}
+    #resp             {{ font-size:36px; padding:4px 8px; width:60%;
+                         text-align:center; display:none; }}
+</style>
+</head>
+<body>
+    <div id="disp"></div>
+    <input id="resp" autocomplete="off" />
+<script>
+//////////////////////////////////////////////////////////////////////
+// PARAMETRES PASSÉS DE PYTHON -> JS
+//////////////////////////////////////////////////////////////////////
+const stimuli       = {stim_json};      // liste de mots
+const CYCLE_LEN     = {CYCLE_LEN_MS};   // 350 ms
+const STIM_START    = {STIM_START_MS};  // 14 ms
+const STIM_INC      = {STIM_STEP_MS};   // +14 ms / cycle
 
-    if s.phase == "js":
-        s.box.empty()                # aucun champ visible
-        show_js(word)
-        if hidden.startswith("{"):
-            s.rt = json.loads(hidden)["rt"]
-            s.receiver = ""
-            s.phase = "typing"
-            st.experimental_rerun()
+//////////////////////////////////////////////////////////////////////
+// VARIABLES DE CONTROLE
+//////////////////////////////////////////////////////////////////////
+let index     = 0;           // mot courant
+let results   = [];          // stockage des données
+let disp      = document.getElementById('disp');
+let respBox   = document.getElementById('resp');
 
-    elif s.phase == "typing":
-        st.write(f"RT : **{s.rt} ms**")
-        answer = s.box.text_input("Votre réponse :", key=f"ans_{s.idx}")
-        if answer:                   # Entrée
-            s.data.append(dict(
-                stimulus = word,
-                response = answer.upper(),
-                correct  = answer.upper()==word,
-                rt_ms    = s.rt))
-            # nettoyage
-            s.box.empty()
-            del st.session_state[f"ans_{s.idx}"]
-            s.idx  += 1
-            s.phase = "js"
-            st.experimental_rerun()
+//////////////////////////////////////////////////////////////////////
+// FONCTION PRINCIPALE : lance un essai
+//////////////////////////////////////////////////////////////////////
+function runTrial() {{
+    if (index >= stimuli.length) {{ endExp(); return; }}
 
-def page_end():
-    st.title("Merci !")
-    df = pd.DataFrame(s.data)
-    st.dataframe(df, use_container_width=True)
-    st.download_button("💾 CSV",
-                       df.to_csv(index=False).encode(),
-                       file_name=f"demask_{uuid.uuid4()}.csv",
-                       mime="text/csv")
+    const word      = stimuli[index];
+    const mask      = "#".repeat(word.length);
+    let stimDur     = STIM_START;
+    let maskDur     = CYCLE_LEN - stimDur;
+    let t0          = performance.now();   // début du premier cycle
+    let running     = true;                // true tant qu’on alterne mot/masque
 
-# ─── routage ─────────────────────────────────────────────
-{"intro": page_intro,
- "trial": page_trial,
- "end":   page_end}[s.page]()
+    // ---------- Gestion des cycles mot/masque ----------
+    function oneCycle() {{
+        // Affiche le mot
+        disp.textContent = word;
+        setTimeout(() => {{
+            // Affiche le masque
+            disp.textContent = mask;
+            setTimeout(() => {{
+                if(running) {{
+                    stimDur += STIM_INC;
+                    maskDur  = Math.max(0, CYCLE_LEN - stimDur);
+                    oneCycle();            // cycle suivant
+                }}
+            }}, maskDur);
+        }}, stimDur);
+    }}
+    oneCycle();  // lancement du premier cycle (14 ms + 336 ms)
+
+    // ---------- Détection de l’appui sur ESPACE ----------
+    function onSpace(ev) {{
+        if (ev.code === "Space" && running) {{
+            running = false;                       // stoppe la boucle mot/masque
+            let RT  = performance.now() - t0;      // calcul du temps de réaction
+            disp.textContent = "";                 // on efface l’écran
+            respBox.style.display = "block";       // le champ réponse apparaît
+            respBox.value = "";
+            respBox.focus();
+            window.removeEventListener('keydown', onSpace);
+
+            // ---------- Validation par ENTREE ----------
+            respBox.addEventListener('keydown', function onEnter(e) {{
+                if (e.key === "Enter") {{
+                    e.preventDefault();
+                    let typed = respBox.value.trim();
+                    results.push({{word: word, rt: Math.round(RT), response: typed}});
+                    respBox.style.display = "none";
+                    respBox.removeEventListener('keydown', onEnter);
+                    index += 1;
+                    runTrial();             // mot suivant
+                }}
+            }});
+        }}
+    }}
+    window.addEventListener('keydown', onSpace);
+}}
+
+//////////////////////////////////////////////////////////////////////
+// FIN D’EXPÉRIENCE : export CSV + envoi à Streamlit
+//////////////////////////////////////////////////////////////////////
+function endExp() {{
+    disp.style.fontSize = "32px";
+    disp.textContent    = "Merci, l’expérience est terminée !";
+    // Génération d’un CSV téléchargeable
+    let header  = "word,rt_ms,response\\n";
+    let rows    = results.map(r => `${{r.word}},${{r.rt}},${{r.response}}`).join("\\n");
+    let blob    = new Blob([header+rows], {{type: 'text/csv'}});
+    let url     = URL.createObjectURL(blob);
+    let aLink   = document.createElement('a');
+    aLink.href  = url;
+    aLink.download = "results.csv";
+    aLink.textContent = "Télécharger les résultats";
+    aLink.style.display = "block";
+    aLink.style.marginTop = "25px";
+    document.body.appendChild(aLink);
+
+    // Envoi des données à Streamlit (visible dans st.session_state)
+    const msg = {{type: "results", payload: results}};
+    window.parent.postMessage({{isStreamlitMessage:true, ...msg }}, "*");
+}}
+
+// ------------------------- ON LANCE L’EXPERIENCE -----------------------------
+runTrial();
+</script>
+</body>
+</html>
+"""
+
+###############################################################################
+# 4. RENDER HTML IN STREAMLIT
+###############################################################################
+components.html(html_code, height=400, scrolling=False)
