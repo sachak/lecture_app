@@ -1,212 +1,175 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3  – 80 mots tirés dans Lexique 3.83 (CSV UTF-8)
+EXPERIMENT 3 – 80 mots issus de Lexique 3.83 (CSV UTF-8)
 
-Groupes (20 mots chacun, sans doublon)              Contraintes médianes
------------------------------------------------------------------------
-1. OLD20  < 1.11                                   freqlemfilms2 ∈ [0.44 ; 2.94]
-2. OLD20  > 3.79                                   nblettres     ∈ [8.5 ; 9.5]
-3. PLD20  < 0.70                                   nbphons       ∈ [6.5 ; 7.5]
-4. PLD20  > 3.20
+Groupes (20 mots chacun, sans doublon)
+  – OLD20  < 1.11
+  – OLD20  > 3.79
+  – PLD20  < 0.70
+  – PLD20  > 3.20
 
-Protocole : mot / masque ##### (+14 ms sur le mot à chaque cycle).
-CSV final séparé par « ; ».
+Chaque groupe doit avoir les MÉDIANES suivantes :
+  freqlemfilms2 ∈ [0.44 ; 2.94]
+  nblettres     ∈ [8.5  ; 9.5]
+  nbphons       ∈ [6.5  ; 7.5]
 """
 
 import json, random, pathlib, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
+import numpy as np
 
-# ───────────────── 0. CONFIG PAGE – à appeler AVANT tout st.* ────────────────
+# ───────────── 0. CONFIG STREAMLIT (doit être en premier) ─────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
-HIDE_CSS = """
-<style>
-#MainMenu,header,footer{visibility:hidden;}
-.css-1d391kg{display:none;}
-</style>
-"""
+HIDE = "<style>#MainMenu,header,footer{visibility:hidden}.css-1d391kg{display:none;}</style>"
 
-# ───────────────── 1. CHARGER LE LEXIQUE ─────────────────────────────────────
-LEXIQUE_FILE = "Lexique383.csv"     # CSV UTF-8 « ; » , décimales « , »
+# ───────────── 1. LECTURE DU LEXIQUE ─────────────
+LEXIQUE_FILE = "Lexique383.csv"            # CSV UTF-8 « ; »
 
 def load_lexique(path: pathlib.Path) -> pd.DataFrame:
-    if not path.exists():
-        st.error(f"Fichier {path} introuvable."); st.stop()
+    df = pd.read_csv(path, sep=";", decimal=",", encoding="utf-8",
+                     dtype=str, engine="python", on_bad_lines="skip")
 
-    # lecture UTF-8
-    try:
-        df = pd.read_csv(path, sep=";", decimal=",", encoding="utf-8",
-                         dtype=str, engine="python", on_bad_lines="skip")
-    except UnicodeDecodeError:
-        st.error("Le CSV n'est pas en UTF-8. Ré-enregistrez-le puis relancez."); st.stop()
+    # renommage souple
+    ren = {}
+    for c in df.columns:
+        low = c.lower()
+        if ("étiquettes" in low) or ("ortho" in low) or ("word" in low):
+            ren[c] = "word"
+        elif "old20" in low:           ren[c] = "old20"
+        elif "pld20" in low:           ren[c] = "pld20"
+        elif "freqlemfilms2" in low:   ren[c] = "freq"
+        elif "nblettres" in low:       ren[c] = "letters"
+        elif "nbphons" in low:         ren[c] = "phons"
+    df = df.rename(columns=ren)
 
-    # harmonisation des noms --------------------------------------------------
-    mapping = {}
-    for col in df.columns:
-        low = col.lower()
-        if any(k in low for k in ("étiquettes", "etiquettes", "ortho", "word")):
-            mapping[col] = "word"
-        elif "old20" in low:      mapping[col] = "old20"
-        elif "pld20" in low:      mapping[col] = "pld20"
-        elif "freqlemfilms2" in low: mapping[col] = "freq"
-        elif "nblettres" in low:  mapping[col] = "letters"
-        elif "nbphons" in low:    mapping[col] = "phons"
-    df = df.rename(columns=mapping)
+    needed = {"word", "old20", "pld20", "freq", "letters", "phons"}
+    if not needed.issubset(df.columns):
+        st.error(f"Colonnes manquantes : {needed - set(df.columns)}"); st.stop()
 
-    required = {"word", "old20", "pld20", "freq", "letters", "phons"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes : {required - set(df.columns)}"); st.stop()
-
-    # mise au propre ----------------------------------------------------------
     df["word"] = df["word"].str.upper()
-    for col in ["old20", "pld20", "freq", "letters", "phons"]:
-        df[col] = (df[col].astype(str)
-                            .str.replace(",", ".", regex=False)
-                            .astype(float))
-    df = df.dropna(subset=list(required))
-    return df
+    for c in needed - {"word"}:
+        df[c] = (df[c].astype(str)
+                        .str.replace(",", ".", regex=False)
+                        .astype(float))
+    return df.dropna()
 
-# ───────────────── 2. CRITÈRES DE SÉLECTION ────────────────────────────────
+DF = load_lexique(pathlib.Path(LEXIQUE_FILE))
+
+# ───────────── 2. CRITÈRES & FONCTIONS D’AJUSTEMENT ─────────────
+WINDOWS = dict(freq=(0.44, 2.94),
+               letters=(8.5, 9.5),
+               phons=(6.5, 7.5))
+
+def medians_ok(sample: pd.DataFrame) -> bool:
+    return all(lo <= sample[col].median() <= hi
+               for col, (lo, hi) in WINDOWS.items())
+
 GROUPS = {
-    "LOW_OLD":  lambda d: d.old20  < 1.11,
-    "HIGH_OLD": lambda d: d.old20  > 3.79,
-    "LOW_PLD":  lambda d: d.pld20  < 0.70,
-    "HIGH_PLD": lambda d: d.pld20  > 3.20,
+    "LOW_OLD" : lambda d: d.old20 < 1.11,
+    "HIGH_OLD": lambda d: d.old20 > 3.79,
+    "LOW_PLD" : lambda d: d.pld20 < 0.70,
+    "HIGH_PLD": lambda d: d.pld20 > 3.20,
 }
-MEDIAN_OK = {
-    "freq":   (0.44, 2.94),
-    "letters":(8.5, 9.5),
-    "phons":  (6.5, 7.5),
-}
-
-def medians_within(df: pd.DataFrame) -> bool:
-    return all(mn <= df[col].median() <= mx for col,(mn,mx) in MEDIAN_OK.items())
 
 @st.cache_data(show_spinner="Sélection des 80 mots…")
 def pick_stimuli() -> list[str]:
-    df = load_lexique(pathlib.Path(LEXIQUE_FILE))
-    rng = random.Random()
-    chosen: set[str] = set()
-    final_list: list[str] = []
+    rng = np.random.default_rng()
+    chosen = set()
+    final  = []
 
-    for gname, cond in GROUPS.items():
-        pool = df.loc[cond(df) & ~df.word.isin(chosen)].copy()
+    for name, cond in GROUPS.items():
+        pool = DF.loc[cond(DF) & ~DF.word.isin(chosen)].copy()
         if len(pool) < 20:
-            st.error(f"Pas assez de mots pour {gname} après exclusion des doublons."); st.stop()
+            st.error(f"{name} : seulement {len(pool)} candidats après exclusion doublons."); st.stop()
 
-        # tirage itératif jusqu'à satisfaire les médianes
-        max_tries = 20000
-        for _ in range(max_tries):
-            sample = pool.sample(20, random_state=rng.randint(0, 1_000_000))
-            if medians_within(sample):
-                final_list.extend(sample.word.tolist())
-                chosen.update(sample.word)
+        idx = pool.index.to_numpy()
+        ok  = False
+        for _ in range(2000):          # 2 000 tirages aléatoires max → ≈ 0-0.2 s
+            sel_idx = rng.choice(idx, size=20, replace=False)
+            sample  = pool.loc[sel_idx]
+            if medians_ok(sample):
+                ok = True
                 break
-        else:
-            st.error(f"Impossible de trouver 20 mots pour {gname} respectant les médianes."); st.stop()
+        if not ok:
+            st.error(f"Impossible de calibrer les médianes pour {name} en 2000 tirages."); st.stop()
 
-    rng.shuffle(final_list)
-    return final_list
+        final.extend(sample.word.tolist())
+        chosen.update(sample.word)
 
-STIMULI = pick_stimuli()
+    random.shuffle(final)
+    return final
 
-# ───────────────── 3. PARAMÈTRES TEMPORELS ────────────────────────────────
+STIMULI = pick_stimuli()          # ← rapide (≤ 2 s)
+
+# ───────────── 3. PARAMÈTRES TEMPORISATION ─────────────
 CYCLE_MS, START_MS, STEP_MS = 350, 14, 14
 
-# ───────────────── 4. INTERFACE STREAMLIT ────────────────────────────────
+# ───────────── 4. UI STREAMLIT & PROTOCOLE ─────────────
 if "stage" not in st.session_state:
     st.session_state.stage = "intro"
 
-# ------------------------- PAGE INTRO -------------------------------------
+# ---------- PAGE INTRO ----------
 if st.session_state.stage == "intro":
-    st.markdown(HIDE_CSS, unsafe_allow_html=True)
+    st.markdown(HIDE, unsafe_allow_html=True)
     st.title("EXPERIMENT 3 : reconnaissance de mots masqués")
-    st.write("80 mots tirés aléatoirement (OLD20 / PLD20 ± contraintes médianes).")
-    st.markdown("""
-1. Fixez le centre de l’écran.  
-2. Appuyez sur **ESPACE** dès que vous reconnaissez le mot.  
-3. Tapez le mot et validez par **Entrée**.  
-""")
+    st.write("80 mots tirés (OLD20 / PLD20) avec médianes calibrées.")
     if st.button("Démarrer l’expérience"):
-        st.session_state.stage = "exp"
-        st.experimental_rerun()
+        st.session_state.stage = "exp"; st.experimental_rerun()
 
-# ------------------------- PAGE EXPÉRIENCE --------------------------------
+# ---------- PAGE EXP ----------
 elif st.session_state.stage == "exp":
-    st.markdown(HIDE_CSS, unsafe_allow_html=True)
+    st.markdown(HIDE, unsafe_allow_html=True)
 
     html = f"""
-<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
 <style>
- html,body {{
-   height:100%; margin:0; display:flex; align-items:center; justify-content:center;
-   background:#fff; font-family:'Courier New',monospace;
- }}
- #scr {{font-size:60px; user-select:none;}}
- #ans {{display:none;font-size:48px;width:60%;text-align:center;}}
+ html,body{{height:100%;margin:0;display:flex;align-items:center;justify-content:center;
+           background:#fff;font-family:'Courier New',monospace}}
+ #scr{{font-size:60px;user-select:none}}
+ #ans{{display:none;font-size:48px;width:60%;text-align:center}}
 </style></head>
 <body id="body" tabindex="0">
-  <div id="scr"></div>
-  <input id="ans" autocomplete="off"/>
+<div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 window.addEventListener('load',()=>document.getElementById('body').focus());
 
-const WORDS = {json.dumps(STIMULI)};
-const CYCLE = {CYCLE_MS}, START = {START_MS}, STEP = {STEP_MS};
+const WORDS={json.dumps(STIMULI)},C={CYCLE_MS},S={START_MS},P={STEP_MS};
+let i=0,res=[],scr=document.getElementById('scr'),ans=document.getElementById('ans');
 
-let idx = 0, res = [];
-const scr = document.getElementById('scr');
-const ans = document.getElementById('ans');
+function trial(){{
+ if(i>=WORDS.length){{fin();return;}}
+ const w=WORDS[i],mask='#'.repeat(w.length);
+ let sd=S,md=C-sd,t0=performance.now(),go=true,t1,t2;
+ function loop(){{if(!go)return;
+  scr.textContent=w;
+  t1=setTimeout(()=>{{if(!go)return;
+    scr.textContent=mask;
+    t2=setTimeout(()=>{{if(go){{sd+=P;md=Math.max(0,C-sd);loop();}}}},md);
+  }},sd);}} loop();
 
-function runTrial() {{
-  if(idx >= WORDS.length) {{ end(); return; }}
-  const w = WORDS[idx];
-  const mask = '#'.repeat(w.length);
-  let sd = START, md = CYCLE - sd, t0 = performance.now(), go=true, t1=null, t2=null;
-
-  function loop() {{
-    if(!go) return;
-    scr.textContent = w;
-    t1 = setTimeout(()=>{{ if(!go) return;
-      scr.textContent = mask;
-      t2 = setTimeout(()=>{{ if(go) {{ sd += STEP; md = Math.max(0,CYCLE-sd); loop(); }} }}, md);
-    }}, sd);
-  }} loop();
-
-  function onSpace(e) {{
-    if(e.code === 'Space' && go) {{
-      go = false; clearTimeout(t1); clearTimeout(t2);
-      const rt = Math.round(performance.now() - t0);
-      window.removeEventListener('keydown', onSpace);
-
-      scr.textContent = '';
-      ans.style.display = 'block'; ans.value = ''; ans.focus();
-
-      ans.addEventListener('keydown', function onEnter(ev) {{
-        if(ev.key === 'Enter') {{
-          ev.preventDefault();
-          res.push({{word:w, rt_ms:rt, response:ans.value.trim()}});
-          ans.removeEventListener('keydown', onEnter);
-          ans.style.display = 'none'; idx += 1; runTrial();
-        }}
-      }});
-    }}
-  }} window.addEventListener('keydown', onSpace);
+ window.addEventListener('keydown',function onSpace(e){{
+   if(e.code==='Space'&&go){{go=false;clearTimeout(t1);clearTimeout(t2);
+     const rt=Math.round(performance.now()-t0);
+     window.removeEventListener('keydown',onSpace);
+     scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
+     ans.addEventListener('keydown',function onEnter(ev){{
+       if(ev.key==='Enter'){{ev.preventDefault();
+         res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
+         ans.removeEventListener('keydown',onEnter);ans.style.display='none';i++;trial();}}}});
+   }}
+ }});
 }}
 
-function end() {{
-  scr.style.fontSize = '40px';
-  scr.textContent = 'Merci ! Fin de l’expérience.';
-  const SEP=';';
-  const csv = ['word','rt_ms','response'].join(SEP)+'\\n' +
-              res.map(r=>[r.word,r.rt_ms,r.response].join(SEP)).join('\\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv],{{type:'text/csv;charset=utf-8'}}));
-  a.download = 'results.csv'; a.textContent = 'Télécharger les résultats (.csv)';
-  a.style.fontSize = '32px'; a.style.marginTop = '30px';
-  document.body.appendChild(a);
+function fin(){{
+ scr.style.fontSize='40px';scr.textContent='Merci ! Fin.';
+ const csv=['word;rt_ms;response',...res.map(r=>r.word+';'+r.rt_ms+';'+r.response)].join('\\n');
+ const a=document.createElement('a');
+ a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv;charset=utf-8'}}));
+ a.download='results.csv';a.textContent='Télécharger les résultats';
+ a.style.fontSize='32px';a.style.marginTop='30px';document.body.appendChild(a);
 }}
 
-runTrial();
+trial();
 </script></body></html>
 """
     components.html(html, height=650, width=1100, scrolling=False)
