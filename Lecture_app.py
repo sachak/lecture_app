@@ -1,15 +1,49 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIMENTATION STREAMLIT
+EXPÉRIMENTATION STREAMLIT ― VERSION « PLEIN-ÉCRAN »
 
-Partie 1 : Détection de pseudo-mot    (5-9 essais, 2 s maxi)
+Partie 1 : Détection de pseudo-mot    (5-9 essais, 2 s maxi)  
 Partie 2 : Vocabulaire – fréquence    (7 mots, échelle 1-7)
-Chaque bouton de la partie 2 affiche désormais son INTITULÉ.
-Deux CSV encodés UTF-8-SIG sont proposés à la fin.
+
+• L’interface Streamlit (menu, barre d’en-tête, footer, sidebar) est masquée.  
+• Le navigateur passe en plein-écran dès le clic sur « Commencer la partie 1 ».  
+• Deux fichiers CSV (UTF-8-SIG) sont proposés à la fin.
 """
 import time, random, uuid, pandas as pd, streamlit as st
+import streamlit.components.v1 as components     # ← pour le JavaScript plein-écran
 
-# ───────── Données ───────────────────────────────────────────────────────────
+# ───────── Configuration globale & habillage ─────────────────────────────────
+st.set_page_config(page_title="Expérience", page_icon="🔡", layout="wide")
+
+# Masquage complet de l’UI Streamlit
+st.markdown(
+    """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header    {visibility: hidden;}
+    footer    {visibility: hidden;}
+    div[data-testid="stSidebar"] {display: none;}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+def go_fullscreen() -> None:
+    """Demande au navigateur de passer en mode plein-écran."""
+    components.html(
+        """
+        <script>
+        var doc = window.parent.document.documentElement;
+        if      (doc.requestFullscreen)       {doc.requestFullscreen();}
+        else if (doc.mozRequestFullScreen)    {doc.mozRequestFullScreen();}
+        else if (doc.webkitRequestFullscreen) {doc.webkitRequestFullscreen();}
+        else if (doc.msRequestFullscreen)     {doc.msRequestFullscreen();}
+        </script>
+        """,
+        height=0, width=0
+    )
+
+# ───────── Données expérimentales ───────────────────────────────────────────
 PSEUDOS = [
     "appendance", "arrancerai", "assoubiers", "caratillés", "cavartenne",
     "caporenèse", "batistrale", "bâfrentade", "banonneuse"
@@ -31,13 +65,13 @@ LABELS_1_7 = {
 }
 
 # ───────── Paramètres temps (s / ms) ─────────────────────────────────────────
-FIX, BLANK = .5, .5
-LIM_MS     = 2000
-ISI_VOC    = 1.5
-TICK       = .05
+FIX, BLANK = .5, .5       # croix + écran blanc
+LIM_MS     = 2000         # limite de réponse (pseudo-mots) en ms
+ISI_VOC    = 1.5          # inter-stimulus vocabulaire
+TICK       = .05          # rafraîchissement « quasi temps réel »
 
-# ───────── Construction essais partie 1 ──────────────────────────────────────
-def build_trials():
+# ───────── Construction des essais (partie 1) ───────────────────────────────
+def build_trials() -> pd.DataFrame:
     r = random.randint(0, 4)           # paires mot+mot
     m = 9 - 2 * r                      # paires mot+pseudo
     random.shuffle(WORDS)
@@ -55,11 +89,12 @@ def build_trials():
     random.shuffle(trials)
     return pd.DataFrame(trials)
 
-# ───────── Initialisation état Streamlit ─────────────────────────────────────
+# ───────── Initialisation de l’état Streamlit ───────────────────────────────
 def init_state():
     s = st.session_state
     s.setdefault("page", 0)
 
+    # Partie 1
     if "stim_lex" not in s:
         s.stim_lex = build_trials()
     s.setdefault("lex_trial", 0)
@@ -69,6 +104,7 @@ def init_state():
     s.setdefault("lex_fb_left", 0.0)
     s.setdefault("lex_log", [])
 
+    # Partie 2
     if "stim_vocab" not in s:
         tmp = VOCAB_WORDS.copy(); random.shuffle(tmp)
         s.stim_vocab = tmp
@@ -77,6 +113,7 @@ def init_state():
     s.setdefault("voc_t0", time.perf_counter())
     s.setdefault("voc_t_word", 0.0)
     s.setdefault("voc_log", [])
+
 init_state()
 
 # ───────── Petit « tick » pour la boucle pseudo temps réel ──────────────────
@@ -84,9 +121,8 @@ def tick():
     time.sleep(TICK)
     st.rerun()
 
-# ═════════════════════════════════  PARTIE 1  ════════════════════════════════
+# ═══════════════════════════  PARTIE 1 – INTRO  ═════════════════════════════
 def page_intro_lex():
-    st.set_page_config(page_title="Expérience", page_icon="🔡")
     st.title("Partie 1 – Détection de pseudo-mot")
     st.markdown(f"""
 Vous allez voir **{len(st.session_state.stim_lex)}** paires :
@@ -94,25 +130,29 @@ Vous allez voir **{len(st.session_state.stim_lex)}** paires :
 • **Seulement des mots** : 2 vrais mots français  
 • **Pseudo-mot présent** : ≥ 1 pseudo-mot  
 
-2 s pour répondre ; sinon « Trop lent ».
+Vous avez 2 s pour répondre ; sinon « Trop lent ».
 """)
     if st.button("Commencer la partie 1 ➡️"):
+        go_fullscreen()                       # ← on bascule en plein-écran
         st.session_state.page = 1
         st.session_state.lex_trial = 0
         st.session_state.lex_phase = "fix"
         st.session_state.lex_t0    = time.perf_counter()
         st.rerun()
 
+# ═══════════════════════════  PARTIE 1 – TÂCHE  ═════════════════════════════
 def page_task_lex():
     i  = st.session_state.lex_trial
     df = st.session_state.stim_lex
     if i >= len(df):
         st.session_state.page = 2; st.rerun(); return
 
-    row = df.iloc[i]
-    w1, w2, cle = row.w1, row.w2, row.cle
-    ph, t0      = st.session_state.lex_phase, st.session_state.lex_t0
-    elapsed     = time.perf_counter() - t0
+    row     = df.iloc[i]
+    w1, w2  = row.w1, row.w2
+    cle     = row.cle
+    ph      = st.session_state.lex_phase
+    t0      = st.session_state.lex_t0
+    elapsed = time.perf_counter() - t0
 
     if ph == "fix":
         st.markdown("<h1 style='text-align:center'>+</h1>", unsafe_allow_html=True)
@@ -128,23 +168,29 @@ def page_task_lex():
         tick()
 
     elif ph == "stim":
-        st.markdown(f"<div style='text-align:center;font-size:40px;line-height:1.2'>"
-                    f"{w1}<br>{w2}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='text-align:center;font-size:40px;line-height:1.2'>"
+            f"{w1}<br>{w2}</div>",
+            unsafe_allow_html=True
+        )
 
         col_ok, col_ps = st.columns(2)
         resp = None
         with col_ok:
-            if st.button("Seulement des mots ✔️", key=f"ok_{i}"): resp = 1
+            if st.button("Seulement des mots ✔️", key=f"ok_{i}"):
+                resp = 1
         with col_ps:
-            if st.button("Pseudo-mot présent ❌", key=f"ps_{i}"): resp = 2
+            if st.button("Pseudo-mot présent ❌", key=f"ps_{i}"):
+                resp = 2
 
-        rt = int((time.perf_counter() - st.session_state.lex_t_stim)*1000)
+        rt = int((time.perf_counter() - st.session_state.lex_t_stim) * 1000)
 
         if resp is not None and rt <= LIM_MS:
             score = 1 if resp == cle else 0
             st.session_state.lex_log.append(
                 dict(trial=i+1, w1=w1, w2=w2, resp=resp,
-                     rt=rt, score=score, too_slow=0))
+                     rt=rt, score=score, too_slow=0)
+            )
             st.session_state.lex_trial += 1
             st.session_state.lex_phase, st.session_state.lex_t0 = "fix", time.perf_counter()
             st.rerun()
@@ -152,7 +198,8 @@ def page_task_lex():
         elif rt > LIM_MS:
             st.session_state.lex_log.append(
                 dict(trial=i+1, w1=w1, w2=w2, resp=None,
-                     rt=rt, score=0, too_slow=1))
+                     rt=rt, score=0, too_slow=1)
+            )
             st.session_state.lex_fb_left = 1.5
             st.session_state.lex_phase, st.session_state.lex_t0 = "fb", time.perf_counter()
             st.rerun()
@@ -168,11 +215,11 @@ def page_task_lex():
         else:
             tick()
 
-# ════════════════════════════════  PARTIE 2  ════════════════════════════════
+# ═══════════════════════════  PARTIE 2 – INTRO  ═════════════════════════════
 def page_intro_vocab():
     st.title("Partie 2 – Vocabulaire : fréquence d’exposition à l’écrit")
-    st.write("Choisissez pour chaque mot la fréquence à laquelle **vous le "
-             "rencontrez à l’écrit** :")
+    st.write("Choisissez pour chaque mot la fréquence à laquelle "
+             "vous le rencontrez **à l’écrit** :")
     st.markdown("""
 | Bouton | Signification |
 |:---:|---|
@@ -191,15 +238,16 @@ def page_intro_vocab():
         st.session_state.voc_t0    = time.perf_counter()
         st.rerun()
 
+# ═══════════════════════════  PARTIE 2 – TÂCHE  ═════════════════════════════
 def page_task_vocab():
-    j  = st.session_state.voc_trial
-    lst= st.session_state.stim_vocab
+    j   = st.session_state.voc_trial
+    lst = st.session_state.stim_vocab
     if j >= len(lst):
         st.session_state.page = 4; st.rerun(); return
 
-    word   = lst[j]
-    phase  = st.session_state.voc_phase
-    elapsed= time.perf_counter() - st.session_state.voc_t0
+    word    = lst[j]
+    phase   = st.session_state.voc_phase
+    elapsed = time.perf_counter() - st.session_state.voc_t0
 
     if phase == "fix":
         st.markdown("<h1 style='text-align:center'>+</h1>", unsafe_allow_html=True)
@@ -216,8 +264,11 @@ def page_task_vocab():
         tick()
 
     elif phase == "word":
-        st.markdown(f"<div style='text-align:center;font-family:Times New Roman;"
-                    f"font-size:42px;'>{word}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='text-align:center;font-family:Times New Roman;"
+            f"font-size:42px;'>{word}</div>",
+            unsafe_allow_html=True
+        )
 
         cols = st.columns(7)
         resp = None
@@ -226,13 +277,17 @@ def page_task_vocab():
             with cols[idx]:
                 if st.button(str(num), key=f"rate_{j}_{num}"):
                     resp = num
-                st.markdown(f"<div style='font-size:12px;text-align:center'>"
-                            f"{LABELS_1_7[num]}</div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='font-size:12px;text-align:center'>"
+                    f"{LABELS_1_7[num]}</div>",
+                    unsafe_allow_html=True
+                )
 
         if resp is not None:
-            rt = int((time.perf_counter() - st.session_state.voc_t_word)*1000)
+            rt = int((time.perf_counter() - st.session_state.voc_t_word) * 1000)
             st.session_state.voc_log.append(
-                dict(order=j+1, word=word, rating=resp, rt=rt))
+                dict(order=j+1, word=word, rating=resp, rt=rt)
+            )
             st.session_state.voc_phase, st.session_state.voc_t0 = "isi", time.perf_counter()
             st.rerun()
         else:
@@ -247,23 +302,29 @@ def page_task_vocab():
         else:
             tick()
 
-# ═══════════════════════════════  FIN & EXPORT  ═════════════════════════════
+# ═══════════════════════════  FIN & EXPORT  ════════════════════════════════
 def page_fin():
     st.title("Merci pour votre participation !")
 
     df1 = pd.DataFrame(st.session_state.lex_log)
     st.subheader("Partie 1 – Pseudo-mots")
     st.dataframe(df1)
-    st.download_button("📥 Télécharger partie 1 (CSV)",
+    st.download_button(
+        "📥 Télécharger partie 1 (CSV)",
         data=df1.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'),
-        file_name=f"{uuid.uuid4()}_lexicale.csv", mime="text/csv")
+        file_name=f"{uuid.uuid4()}_lexicale.csv",
+        mime="text/csv"
+    )
 
     df2 = pd.DataFrame(st.session_state.voc_log)
     st.subheader("Partie 2 – Vocabulaire")
     st.dataframe(df2)
-    st.download_button("📥 Télécharger partie 2 (CSV)",
+    st.download_button(
+        "📥 Télécharger partie 2 (CSV)",
         data=df2.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'),
-        file_name=f"{uuid.uuid4()}_vocab.csv", mime="text/csv")
+        file_name=f"{uuid.uuid4()}_vocab.csv",
+        mime="text/csv"
+    )
 
     st.success("Fichiers prêts – vous pouvez fermer l’onglet.")
 
