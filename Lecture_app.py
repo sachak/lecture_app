@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 Progressive-demasking (Streamlit + JavaScript)
-– La zone de saisie n’apparaît qu’après <Espace>
-– Elle disparaît dès la validation (Entrée)
+• La zone de saisie n’apparaît qu’après l’appui sur <Espace>
+• Elle disparaît dès la validation (Entrée)
+© 2024 – usage pédagogique
 """
 import json, random, uuid, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
 
-# ─── PARAMÈTRES ────────────────────────────────────────────
+# ─── Paramètres de l’expérience ────────────────────────────────────────────
 CYCLE_MS, STEP_MS, MASK_CHAR = 350, 14, "#"
 
 STIMULI = [
@@ -18,137 +19,130 @@ STIMULI = [
 ]
 random.shuffle(STIMULI)
 
-# ─── ÉTAT SESSION ──────────────────────────────────────────
+# ─── État Streamlit ────────────────────────────────────────────────────────
 s = st.session_state
-if "page" not in s:
-    s.page, s.idx, s.wait_js, s.typing, s.rt, s.results = "intro", 0, False, False, None, []
+if "page" not in s:        # première exécution
+    s.page   = "intro"     # intro | trial | end
+    s.idx    = 0           # index du mot courant
+    s.phase  = "js"        # js  | typing
+    s.rt     = None
+    s.results= []
 
-# ─── COMPOSANT RÉCEPTEUR (caché) ──────────────────────────
-def receiver():
-    # CSS pour masquer complètement le champ caché
-    st.markdown(
-        """<style>#receiver_input{display:none !important;}</style>""",
-        unsafe_allow_html=True
-    )
-    components.html(
-        """
-<script>
-window.addEventListener("message", evt => {
-  if (evt.data && evt.data.source === "demask") {
-      const hidden = window.parent.document.getElementById("receiver_input");
-      if (hidden) {
-          hidden.value = JSON.stringify(evt.data);
-          hidden.dispatchEvent(new Event('input', {bubbles:true}));
-      }
-  }
-});
-</script>
-""", height=0)
-    # Champ texte réellement caché
-    st.text_input("", key="receiver_input", label_visibility="collapsed", disabled=True)
-
-# ─── COMPOSANT STIMULUS (JS) ──────────────────────────────
-def demask(word: str):
+# ─── HTML + JS : stimulus progressive-demasking ────────────────────────────
+def demask_component(word: str, idx: int):
     mask = MASK_CHAR * len(word)
     html = f"""
 <div id="stim" style="font-size:64px;text-align:center;
                       font-family:monospace;margin-top:25vh;"></div>
 
 <script>
-const WORD     = "{word}";
-const MASK     = "{mask}";
-const CYCLE_MS = {CYCLE_MS};
-const STEP_MS  = {STEP_MS};
+const WORD="{word}";
+const MASK="{mask}";
+const CYCLE={CYCLE_MS};
+const STEP={STEP_MS};
+let start = performance.now();
+let stop  = false;
+let div   = document.getElementById("stim");
 
-let start  = performance.now();
-let div    = document.getElementById("stim");
-let stop   = false;
-let rafID  = null;
-
-/* Boucle frame-lockée */
-function flip(ts) {{
-    if (stop) return;
-    const e   = ts - start;
-    const idx = Math.floor(e / CYCLE_MS);
-    const d   = Math.min(STEP_MS * (idx + 1), CYCLE_MS);
-    const show= (e % CYCLE_MS) < d;
-    div.textContent = show ? WORD : MASK;
-    rafID = requestAnimationFrame(flip);
+function flip(ts){{
+    if(stop) return;
+    const el   = ts - start;
+    const i    = Math.floor(el / CYCLE);
+    const d    = Math.min(STEP * (i+1), CYCLE);
+    div.textContent = (el % CYCLE) < d ? WORD : MASK;
+    requestAnimationFrame(flip);
 }}
-rafID = requestAnimationFrame(flip);
+requestAnimationFrame(flip);
 
-/* Appui barre Espace */
-window.addEventListener("keydown", e => {{
-    if ((e.key === ' ' || e.code === 'Space') && !stop) {{
-        stop = true;
-        cancelAnimationFrame(rafID);
-        div.textContent = "";
-        div.style.display = "none";
-        const rt = Math.round(performance.now() - start);
-        window.parent.postMessage({{
-            source:"demask", word:WORD, rt:rt
-        }},"*");
-    }}
-}});
+function endTrial(){{
+   stop = true;
+   div.textContent = "";
+   div.style.display = "none";
+   const rt = Math.round(performance.now() - start);
+
+   /* on écrit le JSON dans le champ caché de la page Streamlit */
+   const hidden = window.parent.document.getElementById("receiver_input");
+   if(hidden){{
+       hidden.value = JSON.stringify({{idx:{idx}, rt:rt}});
+       hidden.dispatchEvent(new Event('input', {{ bubbles:true }}));
+   }}
+}}
+
+/* écoute de la barre espace */
+document.addEventListener('keydown', e=>{
+    if(e.code==='Space' || e.key===' ') endTrial();
+});
 </script>
 """
-    components.html(html, height=400, scrolling=False)
+    components.html(html, height=400, scrolling=False, key=f"stim_{idx}")
 
-# ─── PAGES ────────────────────────────────────────────────
+# ─── Champ caché + CSS pour qu’il soit invisible ───────────────────────────
+def hidden_receiver():
+    st.markdown(
+        "<style>input#receiver_input{display:none;}</style>",
+        unsafe_allow_html=True
+    )
+    st.text_input("", key="receiver_input", label_visibility="collapsed")
+
+# ─── Page : introduction ───────────────────────────────────────────────────
 def page_intro():
     st.title("Tâche de dévoilement progressif – en ligne")
     st.markdown(
-        "Cliquez sur **Démarrer**. Le mot se dévoile progressivement ; "
-        "appuyez sur la **barre Espace** dès que vous l’avez reconnu, "
-        "puis tapez-le et validez par **Entrée**."
+        "Cliquez sur **Démarrer**. Un mot se dévoilera peu à peu. "
+        "Dès que vous l’avez reconnu, appuyez sur la **barre Espace** ; "
+        "la zone de réponse apparaîtra alors. Tapez le mot et validez par "
+        "**Entrée**."
     )
     if st.button("Démarrer"):
-        s.page, s.wait_js = "trial", True
+        s.page, s.phase = "trial", "js"
         st.rerun()
 
+# ─── Page : un essai ───────────────────────────────────────────────────────
 def page_trial():
-    if s.idx >= len(STIMULI):
+    if s.idx >= len(STIMULI):          # expérience terminée
         s.page = "end"; st.rerun(); return
 
     word = STIMULI[s.idx]
+    hidden_receiver()                  # champ caché (toujours présent)
+    msg = s.get("receiver_input", "")
 
-    # 1. Phase JavaScript
-    if s.wait_js:
-        receiver()
-        demask(word)
-        msg = s.get("receiver_input","")
-        if msg and msg.strip().startswith("{"):
+    # Phase 1 : animation JS
+    if s.phase == "js":
+        demask_component(word, s.idx)
+        if msg.startswith("{"):        # JSON reçu depuis le JS
             data = json.loads(msg)
-            s.rt = data["rt"]
-            s.wait_js, s.typing = False, True
-            s["receiver_input"] = ""          # reset
+            s.rt      = data["rt"]
+            s.phase   = "typing"       # on passe à la saisie
+            s["receiver_input"] = ""   # reset champ caché
             st.rerun()
 
-    # 2. Phase de saisie (visible seulement ici)
-    elif s.typing:
+    # Phase 2 : zone de réponse visible
+    elif s.phase == "typing":
         st.write(f"Temps de réaction : **{s.rt} ms**")
-        typed = st.text_input("Tapez le mot reconnu puis Entrée :",
-                              key=f"typed_{s.idx}")
-        if typed:                             # validation par Entrée
+        answer = st.text_input("Tapez le mot reconnu :", key=f"typed_{s.idx}")
+        if answer:                     # Entrée = validation
             s.results.append(dict(
                 stimulus = word,
-                response = typed.upper(),
-                correct  = (typed.upper() == word),
+                response = answer.upper(),
+                correct  = answer.upper() == word,
                 rt_ms    = s.rt
             ))
-            s.idx += 1
-            s.wait_js, s.typing = True, False
+            s.idx   += 1
+            s.phase  = "js"            # nouveau mot → phase animation
             st.rerun()
 
+# ─── Page : fin ────────────────────────────────────────────────────────────
 def page_end():
     st.title("Expérience terminée – merci !")
     df = pd.DataFrame(s.results)
     st.dataframe(df, use_container_width=True)
-    st.download_button("📥 Télécharger les résultats (.csv)",
+    st.download_button(
+        "📥 Télécharger les résultats (.csv)",
         df.to_csv(index=False).encode("utf-8"),
         file_name=f"demask_{uuid.uuid4()}.csv",
-        mime="text/csv")
+        mime="text/csv"
+    )
     st.success("Vous pouvez fermer l’onglet.")
 
-# ─── ROUTAGE ──────────────────────────────────────────────
+# ─── Routage principal ─────────────────────────────────────────────────────
 {"intro": page_intro, "trial": page_trial, "end": page_end}[s.page]()
