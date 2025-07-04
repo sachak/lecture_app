@@ -1,125 +1,111 @@
 # -*- coding: utf-8 -*-
 """
-EXPERIMENT 3 – 80 mots issus de Lexique 3.83 (CSV UTF-8)
+EXPERIMENT 3 – 80 mots tirés dans Lexique 3.83 (CSV UTF-8)
 
-Groupes (20 mots chacun, sans doublon)
-  – OLD20  < 1.11
-  – OLD20  > 3.79
-  – PLD20  < 0.70
-  – PLD20  > 3.20
+Groupes (20 mots chacun, tous différents)
+  1. OLD20 < 1.11
+  2. OLD20 > 3.79
+  3. PLD20 < 0.70
+  4. PLD20 > 3.20
 
-Chaque groupe doit avoir les MÉDIANES suivantes :
-  freqlemfilms2 ∈ [0.44 ; 2.94]
-  nblettres     ∈ [8.5  ; 9.5]
-  nbphons       ∈ [6.5  ; 7.5]
+Chacun des 4 groupes doit satisfaire SANS approximation :
+  0.44 ≤ médiane(freqlemfilms2) ≤ 2.94
+  8.5  ≤ médiane(nblettres)     ≤ 9.5
+  6.5  ≤ médiane(nbphons)       ≤ 7.5
 """
 
 import json, random, pathlib, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
-import numpy as np
 
-# ───────────── 0. CONFIG STREAMLIT (doit être en premier) ─────────────
+# ───────── 0. configuration Streamlit (toujours avant le 1er st.*) ─────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
-HIDE = "<style>#MainMenu,header,footer{visibility:hidden}.css-1d391kg{display:none;}</style>"
+st.markdown(
+    "<style>#MainMenu,header,footer{visibility:hidden}.css-1d391kg{display:none}</style>",
+    unsafe_allow_html=True,
+)
 
-# ───────────── 1. LECTURE DU LEXIQUE ─────────────
-LEXIQUE_FILE = "Lexique383.csv"            # CSV UTF-8 « ; »
+# ───────── 1. lecture du CSV (UTF-8, ‘;’ comme séparateur) ─────────
+LEXIQUE_FILE = "Lexique383.csv"          # placez le fichier à côté de app.py
 
+@st.cache_data(show_spinner="Chargement du lexique…")
 def load_lexique(path: pathlib.Path) -> pd.DataFrame:
     df = pd.read_csv(path, sep=";", decimal=",", encoding="utf-8",
                      dtype=str, engine="python", on_bad_lines="skip")
 
-    # renommage souple
     ren = {}
     for c in df.columns:
-        low = c.lower()
-        if ("étiquettes" in low) or ("ortho" in low) or ("word" in low):
-            ren[c] = "word"
-        elif "old20" in low:           ren[c] = "old20"
-        elif "pld20" in low:           ren[c] = "pld20"
-        elif "freqlemfilms2" in low:   ren[c] = "freq"
-        elif "nblettres" in low:       ren[c] = "letters"
-        elif "nbphons" in low:         ren[c] = "phons"
+        l = c.lower()
+        if "étiquettes" in l or "ortho" in l or "word" in l: ren[c] = "word"
+        elif "old20"      in l:  ren[c] = "old20"
+        elif "pld20"      in l:  ren[c] = "pld20"
+        elif "freqlemfilms2" in l: ren[c] = "freq"
+        elif "nblettres"  in l:  ren[c] = "letters"
+        elif "nbphons"    in l:  ren[c] = "phons"
     df = df.rename(columns=ren)
 
-    needed = {"word", "old20", "pld20", "freq", "letters", "phons"}
-    if not needed.issubset(df.columns):
-        st.error(f"Colonnes manquantes : {needed - set(df.columns)}"); st.stop()
+    need = {"word","old20","pld20","freq","letters","phons"}
+    if not need.issubset(df.columns):
+        st.error(f"Colonnes manquantes : {need - set(df.columns)}"); st.stop()
 
-    df["word"] = df["word"].str.upper()
-    for c in needed - {"word"}:
-        df[c] = (df[c].astype(str)
-                        .str.replace(",", ".", regex=False)
-                        .astype(float))
+    df["word"] = df.word.str.upper()
+    for c in need - {"word"}:
+        df[c] = df[c].str.replace(",",".",regex=False).astype(float)
+
     return df.dropna()
 
-DF = load_lexique(pathlib.Path(LEXIQUE_FILE))
+LEX = load_lexique(pathlib.Path(LEXIQUE_FILE))
 
-# ───────────── 2. CRITÈRES & FONCTIONS D’AJUSTEMENT ─────────────
-WINDOWS = dict(freq=(0.44, 2.94),
-               letters=(8.5, 9.5),
-               phons=(6.5, 7.5))
+# ───────── 2. critères & tirage rapide ─────────
+BOUNDS = dict(freq=(0.44,2.94), letters=(8.5,9.5), phons=(6.5,7.5))
 
-def medians_ok(sample: pd.DataFrame) -> bool:
-    return all(lo <= sample[col].median() <= hi
-               for col, (lo, hi) in WINDOWS.items())
+def medians_ok(df: pd.DataFrame) -> bool:
+    return all(lo <= df[col].median() <= hi for col,(lo,hi) in BOUNDS.items())
 
-GROUPS = {
-    "LOW_OLD" : lambda d: d.old20 < 1.11,
-    "HIGH_OLD": lambda d: d.old20 > 3.79,
-    "LOW_PLD" : lambda d: d.pld20 < 0.70,
-    "HIGH_PLD": lambda d: d.pld20 > 3.20,
-}
+GROUPS = [
+    ("LOW_OLD" , lambda d: d.old20 < 1.11),
+    ("HIGH_OLD", lambda d: d.old20 > 3.79),
+    ("LOW_PLD" , lambda d: d.pld20 < 0.70),
+    ("HIGH_PLD", lambda d: d.pld20 > 3.20),
+]
 
 @st.cache_data(show_spinner="Sélection des 80 mots…")
 def pick_stimuli() -> list[str]:
-    rng = np.random.default_rng()
-    chosen = set()
-    final  = []
+    rng = random.Random()
+    chosen, final = set(), []
 
-    for name, cond in GROUPS.items():
-        pool = DF.loc[cond(DF) & ~DF.word.isin(chosen)].copy()
+    for name, cond in GROUPS:
+        pool = LEX.loc[cond(LEX) & ~LEX.word.isin(chosen)].copy()
         if len(pool) < 20:
-            st.error(f"{name} : seulement {len(pool)} candidats après exclusion doublons."); st.stop()
+            st.error(f"{name} : pas assez de candidats ({len(pool)})"); st.stop()
 
-        idx = pool.index.to_numpy()
-        ok  = False
-        for _ in range(2000):          # 2 000 tirages aléatoires max → ≈ 0-0.2 s
-            sel_idx = rng.choice(idx, size=20, replace=False)
-            sample  = pool.loc[sel_idx]
+        for _ in range(300):          # 300 tirages max → < 0,05 s
+            sample = pool.sample(20, random_state=rng.randint(0,999999))
             if medians_ok(sample):
-                ok = True
+                final.extend(sample.word.tolist())
+                chosen.update(sample.word)
                 break
-        if not ok:
-            st.error(f"Impossible de calibrer les médianes pour {name} en 2000 tirages."); st.stop()
+        else:
+            st.error(f"{name} : impossible de satisfaire les médianes en 300 essais"); st.stop()
 
-        final.extend(sample.word.tolist())
-        chosen.update(sample.word)
-
-    random.shuffle(final)
+    rng.shuffle(final)
     return final
 
-STIMULI = pick_stimuli()          # ← rapide (≤ 2 s)
+STIMULI = pick_stimuli()          # ← ~200 ms avec 4 664 mots
 
-# ───────────── 3. PARAMÈTRES TEMPORISATION ─────────────
+# ───────── 3. paramètres temporels du protocole ─────────
 CYCLE_MS, START_MS, STEP_MS = 350, 14, 14
 
-# ───────────── 4. UI STREAMLIT & PROTOCOLE ─────────────
-if "stage" not in st.session_state:
-    st.session_state.stage = "intro"
+# ───────── 4. interface + JavaScript de l’expérience ─────────
+if "page" not in st.session_state: st.session_state.page = "intro"
 
-# ---------- PAGE INTRO ----------
-if st.session_state.stage == "intro":
-    st.markdown(HIDE, unsafe_allow_html=True)
+if st.session_state.page == "intro":
     st.title("EXPERIMENT 3 : reconnaissance de mots masqués")
-    st.write("80 mots tirés (OLD20 / PLD20) avec médianes calibrées.")
+    st.write("80 mots (OLD20 / PLD20) avec médianes calibrées.")
     if st.button("Démarrer l’expérience"):
-        st.session_state.stage = "exp"; st.experimental_rerun()
+        st.session_state.page = "exp"
+        st.experimental_rerun()
 
-# ---------- PAGE EXP ----------
-elif st.session_state.stage == "exp":
-    st.markdown(HIDE, unsafe_allow_html=True)
-
+else:  # page == exp
     html = f"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
 <style>
@@ -133,40 +119,51 @@ elif st.session_state.stage == "exp":
 <script>
 window.addEventListener('load',()=>document.getElementById('body').focus());
 
-const WORDS={json.dumps(STIMULI)},C={CYCLE_MS},S={START_MS},P={STEP_MS};
-let i=0,res=[],scr=document.getElementById('scr'),ans=document.getElementById('ans');
+const W   = {json.dumps(STIMULI)};
+const C   = {CYCLE_MS}, S = {START_MS}, P = {STEP_MS};
+let i=0,res=[];
+const scr=document.getElementById('scr'), ans=document.getElementById('ans');
 
 function trial(){{
- if(i>=WORDS.length){{fin();return;}}
- const w=WORDS[i],mask='#'.repeat(w.length);
- let sd=S,md=C-sd,t0=performance.now(),go=true,t1,t2;
- function loop(){{if(!go)return;
-  scr.textContent=w;
-  t1=setTimeout(()=>{{if(!go)return;
-    scr.textContent=mask;
-    t2=setTimeout(()=>{{if(go){{sd+=P;md=Math.max(0,C-sd);loop();}}}},md);
-  }},sd);}} loop();
+ if(i>=W.length){{fin();return;}}
+ const w=W[i], m='#'.repeat(w.length);
+ let sd=S, md=C-sd, t0=performance.now(), run=true, t1, t2;
 
- window.addEventListener('keydown',function onSpace(e){{
-   if(e.code==='Space'&&go){{go=false;clearTimeout(t1);clearTimeout(t2);
-     const rt=Math.round(performance.now()-t0);
-     window.removeEventListener('keydown',onSpace);
-     scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
-     ans.addEventListener('keydown',function onEnter(ev){{
-       if(ev.key==='Enter'){{ev.preventDefault();
-         res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
-         ans.removeEventListener('keydown',onEnter);ans.style.display='none';i++;trial();}}}});
-   }}
- }});
+ (function loop(){{ if(!run)return;
+   scr.textContent=w;
+   t1=setTimeout(()=>{{ if(!run)return;
+     scr.textContent=m;
+     t2=setTimeout(()=>{{ if(run){{ sd+=P; md=Math.max(0,C-sd); loop(); }} }}, md);
+   }}, sd);
+ }})();
+
+ function onSpace(e){{ if(e.code==='Space'&&run){{
+   run=false; clearTimeout(t1); clearTimeout(t2);
+   const rt=Math.round(performance.now()-t0);
+   window.removeEventListener('keydown',onSpace);
+   scr.textContent=''; ans.style.display='block'; ans.value=''; ans.focus();
+
+   ans.addEventListener('keydown',function onEnter(ev){{
+     if(ev.key==='Enter'){{
+       ev.preventDefault();
+       res.push({{word:w, rt_ms:rt, response:ans.value.trim()}});
+       ans.removeEventListener('keydown',onEnter);
+       ans.style.display='none'; i++; trial();
+     }}
+   }});
+ }} }}
+ window.addEventListener('keydown',onSpace);
 }}
 
 function fin(){{
- scr.style.fontSize='40px';scr.textContent='Merci ! Fin.';
- const csv=['word;rt_ms;response',...res.map(r=>r.word+';'+r.rt_ms+';'+r.response)].join('\\n');
+ scr.style.fontSize='40px'; scr.textContent='Merci ! Fin.';
+ const sep=';', csv=['word','rt_ms','response'].join(sep)+'\\n'+
+           res.map(r=>[r.word,r.rt_ms,r.response].join(sep)).join('\\n');
  const a=document.createElement('a');
- a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv;charset=utf-8'}}));
- a.download='results.csv';a.textContent='Télécharger les résultats';
- a.style.fontSize='32px';a.style.marginTop='30px';document.body.appendChild(a);
+ a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv'}}));
+ a.download='results.csv'; a.textContent='Télécharger les résultats';
+ a.style.fontSize='32px'; a.style.marginTop='30px';
+ document.body.appendChild(a);
 }}
 
 trial();
