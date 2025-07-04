@@ -1,210 +1,185 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIMENTATION STREAMLIT ― VERSION « PLEIN-ÉCRAN » (correction f-string)
+Expérience 3 – Progressive-demasking 100 % web
+© 2024 – libre de droits pour usage pédagogique
 """
-import time, random, uuid, pandas as pd, streamlit as st
-import streamlit.components.v1 as components     # ← JavaScript plein-écran
+import json, random, time, uuid, pandas as pd, streamlit as st
+import streamlit.components.v1 as components
 
-# ───────── Configuration globale & habillage ────────────────────────────────
-st.set_page_config(page_title="Expérience", page_icon="🔡", layout="wide")
-st.markdown(
-    """
-    <style>
-    #MainMenu {visibility: hidden;}
-    header    {visibility: hidden;}
-    footer    {visibility: hidden;}
-    div[data-testid="stSidebar"] {display: none;}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
-def go_fullscreen():
-    """Demande au navigateur de passer en mode plein-écran (pas de f-string)."""
-    components.html(
-        """
-        <script>
-        var doc = window.parent.document.documentElement;
-        if      (doc.requestFullscreen)       {doc.requestFullscreen();}
-        else if (doc.mozRequestFullScreen)    {doc.mozRequestFullScreen();}
-        else if (doc.webkitRequestFullscreen) {doc.webkitRequestFullscreen();}
-        else if (doc.msRequestFullscreen)     {doc.msRequestFullscreen();}
-        </script>
-        """,
-        height=0, width=0
-    )
+# ───────── PARAMÈTRES GÉNÉRAUX ──────────────────────────────────────────────
+CYCLE_MS = 350      # durée fixe d’un cycle (ms)
+STEP_MS  = 14       # +14 ms d’affichage mot / –14 ms masque
+MASK_CH  = "#"      # caractère du masque
 
-# ───────── Données, paramètres, construction des essais ─────────────────────
-PSEUDOS = [
-    "appendance", "arrancerai", "assoubiers", "caratillés", "cavartenne",
-    "caporenèse", "batistrale", "bâfrentade", "banonneuse"
+# Liste exemple (remplacez par vos 80 stimuli réels)
+STIMULI = [
+    "AVION","BALAI","CARTE","CHAUD","CRANE","GARDE","LIVRE","MERCI","NAGER","PARLE",
+    "PORTE","PHOTO","RADIO","ROULE","SALON","SUCRE","TABLE","TIGRE","VIVRE","VOILE",
+    "ATOUT","BALLE","CANNE","CHIEN","FABLE","GELER","METRE","NAVET","PAGNE","PLAGE",
+    "REGLE","RIVET","SAUTE","SOURD","TITRE","VALSE","VOYOU","AMBRE","BASIN","GLACE"
 ]
-WORDS = [
-    "appartenez", "appartenir", "appartiens", "bolivienne", "bolognaise",
-    "bombardais", "cascadeurs", "cascadeuse", "cascatelle"
-]
-VOCAB_WORDS = ["merise", "roseau", "viaduc", "anode", "appeau", "miroir", "cornac"]
+random.shuffle(STIMULI)
 
-LABELS_1_7 = {1:"Jamais",2:"1×/an",3:"1×/mois",4:"1×/semaine",
-              5:"Tous les 2 j",6:"1×/jour",7:"Plusieurs ×/jour"}
-
-FIX, BLANK = .5, .5; LIM_MS = 2000; ISI_VOC = 1.5; TICK = .05
-
-def build_trials():
-    r = random.randint(0, 4); m = 9 - 2*r
-    random.shuffle(WORDS); random.shuffle(PSEUDOS); trials = []
-    for k in range(r):     trials.append(dict(w1=WORDS[2*k], w2=WORDS[2*k+1], cle=1))
-    for k in range(m):
-        w, p = WORDS[2*r+k], PSEUDOS[k]
-        w1, w2 = (w, p) if random.random()<.5 else (p, w)
-        trials.append(dict(w1=w1, w2=w2, cle=2))
-    random.shuffle(trials); return pd.DataFrame(trials)
-
-# ────────── État Streamlit ───────────────────────────────────────────────────
+# ───────── INITIALISATION ÉTAT SESSION ──────────────────────────────────────
 def init_state():
     s = st.session_state
-    s.setdefault("page", 0)
-    if "stim_lex" not in s: s.stim_lex = build_trials()
-    s.setdefault("lex_trial",0);  s.setdefault("lex_phase","fix")
-    s.setdefault("lex_t0",time.perf_counter()); s.setdefault("lex_t_stim",0.0)
-    s.setdefault("lex_fb_left",0.0); s.setdefault("lex_log",[])
-    if "stim_vocab" not in s:
-        tmp = VOCAB_WORDS.copy(); random.shuffle(tmp); s.stim_vocab = tmp
-    s.setdefault("voc_trial",0); s.setdefault("voc_phase","fix")
-    s.setdefault("voc_t0",time.perf_counter()); s.setdefault("voc_t_word",0.0)
-    s.setdefault("voc_log",[])
+    s.setdefault("page", "intro")
+    s.setdefault("trial", 0)            # index stimulus courant
+    s.setdefault("waiting_js", False)   # composant JS actif ?
+    s.setdefault("typing", False)       # on attend la saisie du mot
+    s.setdefault("rt_ms", None)         # RT du dernier essai
+    s.setdefault("results", [])         # liste de dicts
 init_state()
 
-def tick(): time.sleep(TICK); st.rerun()
 
-# ═════════════════════════ PARTIE 1 ═════════════════════════════════════════
-def page_intro_lex():
-    st.title("Partie 1 – Détection de pseudo-mot")
-    st.markdown(f"""
-Vous allez voir **{len(st.session_state.stim_lex)}** paires :
+# ───────── HTML ÉCOUTEUR (réception message JS → Streamlit) ─────────────────
+def receiver_component():
+    components.html(
+        """
+<script>
+/* Écoute les messages provenant de l’iframe du stimulus */
+window.addEventListener("message", (evt)=>{
+  if(evt.data && evt.data.source === "demask"){
+     const hidden = window.parent.document.getElementById("demask_receiver");
+     if(hidden){
+        hidden.value = JSON.stringify(evt.data);
+        hidden.dispatchEvent(new Event('input', {bubbles:true}));
+     }
+  }
+});
+</script>
+""",
+        height=0,
+    )
 
-• **Seulement des mots** : 2 vrais mots français  
-• **Pseudo-mot présent** : ≥ 1 pseudo-mot  
 
-Vous avez 2 s pour répondre ; sinon « Trop lent ».
+# ───────── HTML STIMULUS PROGRESSIVE DEMASKING (JS) ─────────────────────────
+def demask_component(word):
+    """Retourne le code HTML/JS qui fait :
+       - alterner mot / masque (+14 ms par cycle)
+       - écouter la barre espace (reconnaissance)
+       - envoyer {word, rt} au parent (Streamlit)"""
+    mask = MASK_CH * len(word)
+    html = f"""
+<div id="stim" style="font-size:64px;text-align:center;
+                      font-family:monospace;margin-top:25vh;">
+</div>
+
+<script>
+const word     = "{word}";
+const mask     = "{mask}";
+const cycle_ms = {CYCLE_MS};
+const step_ms  = {STEP_MS};
+
+let start = performance.now();
+const stimDiv = document.getElementById("stim");
+
+/* Boucle d’animation frame-lockée */
+function flip(ts){{
+   const elapsed   = ts - start;
+   const cycleIdx  = Math.floor(elapsed / cycle_ms);
+   const stim_dur  = Math.min(step_ms * (cycleIdx+1), cycle_ms);
+   const inCycle   = elapsed % cycle_ms;
+   const showWord  = inCycle < stim_dur;
+   stimDiv.textContent = showWord ? word : mask;
+   requestAnimationFrame(flip);
+}}
+requestAnimationFrame(flip);
+
+/* Réponse : barre espace */
+window.addEventListener("keydown", (e)=>{
+   if(e.code === "Space"){{
+       const rt = performance.now() - start;
+       window.parent.postMessage({{source:"demask",
+                                   word:word,
+                                   rt:Math.round(rt)}}, "*");
+   }}
+}});
+</script>
+"""
+    components.html(html, height=400, scrolling=False)
+
+
+# ───────── PAGE INTRO ────────────────────────────────────────────────────────
+def page_intro():
+    st.title("Tâche de dévoilement progressif (en ligne)")
+    st.markdown("""
+Appuyez sur **Démarrer** pour lancer l’expérience.  
+Regardez le mot apparaître progressivement ; dès que vous l’avez reconnu,
+appuyez sur la **barre espace**.  
+Vous taperez ensuite le mot que vous avez vu.
 """)
-    if st.button("Commencer la partie 1 ➡️"):
-        go_fullscreen()                          # ← plein-écran ici
-        st.session_state.page = 1
-        st.session_state.lex_trial = 0
-        st.session_state.lex_phase = "fix"
-        st.session_state.lex_t0    = time.perf_counter()
+    if st.button("Démarrer"):
+        st.session_state.page = "trial"
+        st.session_state.waiting_js = True
         st.rerun()
 
-def page_task_lex():
-    i  = st.session_state.lex_trial
-    df = st.session_state.stim_lex
-    if i >= len(df): st.session_state.page = 2; st.rerun(); return
-    row=df.iloc[i]; w1,w2,cle=row.w1,row.w2,row.cle
-    ph = st.session_state.lex_phase; t0=st.session_state.lex_t0
-    elapsed = time.perf_counter()-t0
-    if ph=="fix":
-        st.markdown("<h1 style='text-align:center'>+</h1>", unsafe_allow_html=True)
-        if elapsed>=FIX: st.session_state.lex_phase,t= "blank",time.perf_counter(); st.session_state.lex_t0=t
-        tick()
-    elif ph=="blank":
-        st.empty()
-        if elapsed>=BLANK:
-            st.session_state.lex_phase="stim"; st.session_state.lex_t0=time.perf_counter()
-            st.session_state.lex_t_stim=time.perf_counter()
-        tick()
-    elif ph=="stim":
-        st.markdown(f"<div style='text-align:center;font-size:40px;line-height:1.2'>{w1}<br>{w2}</div>",unsafe_allow_html=True)
-        col_ok,col_ps=st.columns(2); resp=None
-        with col_ok:
-            if st.button("Seulement des mots ✔️",key=f"ok_{i}"): resp=1
-        with col_ps:
-            if st.button("Pseudo-mot présent ❌",key=f"ps_{i}"): resp=2
-        rt=int((time.perf_counter()-st.session_state.lex_t_stim)*1000)
-        if resp is not None and rt<=LIM_MS:
-            st.session_state.lex_log.append(dict(trial=i+1,w1=w1,w2=w2,resp=resp,rt=rt,score=int(resp==cle),too_slow=0))
-            st.session_state.lex_trial+=1; st.session_state.lex_phase,t="fix",time.perf_counter(); st.session_state.lex_t0=t; st.rerun()
-        elif rt>LIM_MS:
-            st.session_state.lex_log.append(dict(trial=i+1,w1=w1,w2=w2,resp=None,rt=rt,score=0,too_slow=1))
-            st.session_state.lex_fb_left=1.5; st.session_state.lex_phase,t="fb",time.perf_counter(); st.session_state.lex_t0=t; st.rerun()
-        tick()
-    elif ph=="fb":
-        st.markdown("<h2 style='text-align:center'>Trop lent</h2>",unsafe_allow_html=True)
-        if elapsed>=st.session_state.lex_fb_left:
-            st.session_state.lex_trial+=1; st.session_state.lex_phase,t="fix",time.perf_counter(); st.session_state.lex_t0=t; st.rerun()
-        else: tick()
 
-# ═════════════════════════ PARTIE 2 ═════════════════════════════════════════
-def page_intro_vocab():
-    st.title("Partie 2 – Vocabulaire : fréquence d’exposition à l’écrit")
-    st.write("Choisissez pour chaque mot la fréquence à laquelle vous le rencontrez **à l’écrit** :")
-    st.markdown("""
-| Bouton | Signification |
-|:---:|---|
-| **1** | Jamais |
-| **2** | 1 fois / an |
-| **3** | 1 fois / mois |
-| **4** | 1 fois / semaine |
-| **5** | Tous les 2 jours |
-| **6** | 1 fois / jour |
-| **7** | Plusieurs fois / jour |
-""")
-    if st.button("Commencer la partie 2 ➡️"):
-        st.session_state.page=3; st.session_state.voc_trial=0
-        st.session_state.voc_phase="fix"; st.session_state.voc_t0=time.perf_counter(); st.rerun()
+# ───────── PAGE TRIAL (une tentative) ───────────────────────────────────────
+def page_trial():
+    i = st.session_state.trial
+    if i >= len(STIMULI):
+        st.session_state.page = "end"
+        st.rerun()
+        return
 
-def page_task_vocab():
-    j=st.session_state.voc_trial; lst=st.session_state.stim_vocab
-    if j>=len(lst): st.session_state.page=4; st.rerun(); return
-    word=lst[j]; phase=st.session_state.voc_phase
-    elapsed=time.perf_counter()-st.session_state.voc_t0
-    if phase=="fix":
-        st.markdown("<h1 style='text-align:center'>+</h1>",unsafe_allow_html=True)
-        if elapsed>=FIX: st.session_state.voc_phase="blank"; st.session_state.voc_t0=time.perf_counter()
-        tick()
-    elif phase=="blank":
-        st.empty()
-        if elapsed>=BLANK:
-            st.session_state.voc_phase="word"; st.session_state.voc_t_word=time.perf_counter(); st.session_state.voc_t0=time.perf_counter()
-        tick()
-    elif phase=="word":
-        st.markdown(f"<div style='text-align:center;font-family:Times New Roman;font-size:42px;'>{word}</div>",unsafe_allow_html=True)
-        cols=st.columns(7); resp=None
-        for idx in range(7):
-            num=idx+1
-            with cols[idx]:
-                if st.button(str(num),key=f"rate_{j}_{num}"): resp=num
-                st.markdown(f"<div style='font-size:12px;text-align:center'>{LABELS_1_7[num]}</div>",unsafe_allow_html=True)
-        if resp is not None:
-            rt=int((time.perf_counter()-st.session_state.voc_t_word)*1000)
-            st.session_state.voc_log.append(dict(order=j+1,word=word,rating=resp,rt=rt))
-            st.session_state.voc_phase="isi"; st.session_state.voc_t0=time.perf_counter(); st.rerun()
-        else: tick()
-    elif phase=="isi":
-        st.empty()
-        if elapsed>=ISI_VOC:
-            st.session_state.voc_trial+=1; st.session_state.voc_phase="fix"; st.session_state.voc_t0=time.perf_counter(); st.rerun()
-        else: tick()
+    word = STIMULI[i]
 
-# ═════════════════════════  FIN  ════════════════════════════════════════════
-def page_fin():
-    st.title("Merci pour votre participation !")
-    df1=pd.DataFrame(st.session_state.lex_log)
-    st.subheader("Partie 1 – Pseudo-mots"); st.dataframe(df1)
-    st.download_button("📥 Télécharger partie 1 (CSV)",
-        data=df1.to_csv(index=False,sep=';',encoding='utf-8-sig').encode('utf-8-sig'),
-        file_name=f"{uuid.uuid4()}_lexicale.csv",mime="text/csv")
-    df2=pd.DataFrame(st.session_state.voc_log)
-    st.subheader("Partie 2 – Vocabulaire"); st.dataframe(df2)
-    st.download_button("📥 Télécharger partie 2 (CSV)",
-        data=df2.to_csv(index=False,sep=';',encoding='utf-8-sig').encode('utf-8-sig'),
-        file_name=f"{uuid.uuid4()}_vocab.csv",mime="text/csv")
-    st.success("Fichiers prêts – vous pouvez fermer l’onglet.")
+    # 1) Stimulus JS actif
+    if st.session_state.waiting_js:
+        receiver_component()            # écouteur de messages
+        demask_component(word)          # stimulus dans un iframe
 
-# ───────── Routage global ───────────────────────────────────────────────────
-pg=st.session_state.page
-if   pg==0: page_intro_lex()
-elif pg==1: page_task_lex()
-elif pg==2: page_intro_vocab()
-elif pg==3: page_task_vocab()
-else:        page_fin()
+        # input caché qui recevra le JSON {word, rt}
+        hidden = st.text_input("", key="demask_receiver",
+                               label_visibility="collapsed")
+        if hidden:                      # un message vient d'arriver
+            try:
+                data = json.loads(hidden)
+                st.session_state.rt_ms = data["rt"]
+            except Exception:
+                st.stop()
+            st.session_state.waiting_js = False
+            st.session_state.typing     = True
+            st.session_state["demask_receiver"] = ""   # reset
+            st.rerun()
+
+    # 2) Demande de saisie du mot reconnu
+    elif st.session_state.typing:
+        st.write(f"Temps de réaction : **{st.session_state.rt_ms} ms**")
+        typed = st.text_input(
+            "Tapez le mot reconnu puis appuyez sur Entrée :",
+            key=f"in_{i}"
+        )
+        if typed:
+            st.session_state.results.append({
+                "stimulus" : word,
+                "response" : typed.upper(),
+                "rt_ms"    : st.session_state.rt_ms,
+                "correct"  : typed.upper() == word
+            })
+            # Préparation essai suivant
+            st.session_state.trial      += 1
+            st.session_state.waiting_js  = True
+            st.session_state.typing      = False
+            st.rerun()
+
+
+# ───────── PAGE FIN ─────────────────────────────────────────────────────────
+def page_end():
+    st.title("Expérience terminée, merci !")
+    df = pd.DataFrame(st.session_state.results)
+    st.dataframe(df, use_container_width=True)
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Télécharger les résultats (.csv)",
+                       csv, file_name=f"demasking_{uuid.uuid4()}.csv",
+                       mime="text/csv")
+    st.success("Vous pouvez maintenant fermer l’onglet.")
+
+
+# ───────── ROUTAGE PRINCIPAL ────────────────────────────────────────────────
+page = st.session_state.page
+if   page == "intro":  page_intro()
+elif page == "trial":  page_trial()
+else:                  page_end()
