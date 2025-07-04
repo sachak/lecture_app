@@ -140,18 +140,30 @@ function trial(){{
 /******************************************************************
  * Fin : téléchargement CSV
  *****************************************************************/
-function end(){{
-  scr.style.fontSize='40px';
-  scr.textContent='Merci ! Fin de l’expérience.';
-  const csv = "word,rt_ms,response\\n" +
-              results.map(r=>`${{r.word}},${{r.rt_ms}},${{r.response}}`).join("\\n");
+function endExperiment() {
+  scr.style.fontSize = '40px';
+  scr.textContent    = 'Merci ! Fin de l’expérience.';
+
+  /* séparateur */
+  const SEP    = ';';
+
+  /* entête + lignes */
+  const header = ['word','rt_ms','response'].join(SEP) + '\\n';
+  const rows   = results
+                   .map(r => [r.word, r.rt_ms, r.response].join(SEP))
+                   .join('\\n');
+
+  const blob = new Blob([header + rows], {type: 'text/csv;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv],{{type:'text/csv'}}));
-  a.download='results.csv';
-  a.textContent='Télécharger les résultats';
-  a.style.fontSize='32px'; a.style.marginTop='30px';
+  a.href        = url;
+  a.download    = 'results.csv';      // garde l’extension .csv
+  a.textContent = 'Télécharger les résultats (.csv – séparateur ;)';
+  a.style.fontSize = '32px';
+  a.style.marginTop = '30px';
   document.body.appendChild(a);
-}}
+}
 
 trial();  // lancement
 </script>
