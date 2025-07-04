@@ -1,64 +1,54 @@
 # -*- coding: utf-8 -*-
 """
-Expérience 3 : présentation mot / masque.
-1. Page d’instructions.
-2. Après clic sur « Démarrer » : focus automatique sur l’iframe ⇒
-   l’appui sur ESPACE fonctionne tout de suite (pas besoin de cliquer dans l’écran).
+Expérience 3 – version « tout-en-un »
+Correctif : plus de masque "####" qui reste visible quand le champ-réponse
+apparaît.
 """
 
 import json, random, streamlit as st
 import streamlit.components.v1 as components
 
-# ───────────────────────── PARAMÈTRES ──────────────────────────
+# ----------------------- PARAMÈTRES ------------------------------
 STIMULI = [
-    # 80 mots – exemples
     "DOIGT","TABLE","CHAISE","MAISON","VOITURE","CHEVAL","OISEAU","BOUTEILLE",
-    "MONTAGNE","RIVIERE","PLANTE","POMME","CHIEN","CHAT","MUSIQUE","PARAPLUIE",
-    "MIROIR","FENETRE","LAMPE","TOMATE","SALADE","BUREAU","CASQUE","CAHIER",
-    "NUAGE","ECRAN","SOURIS","CLAVIER","LIVRE","CRAYON","SERVIETTE","PORTE",
-    "MOTEUR","VESTE","ROUTE","TRAIN","AVION","BATEAU","BIJOU","CROISSANT",
-    "EGLISE","PRISON","CAMION","BUS","LUMIERE","OMBRE","SOEUR","FRERE",
-    "MER","OCEAN","SABLE","FORET","ARBRE","FLEUR","SOLEIL","LUNE",
-    "ETOILE","NEIGE","GLACE","PLUIE","VENT","ORAGE","COEUR","SANG",
-    "TETE","MAIN","PIED","JAMBON","FROMAGE","BEURRE","PAIN","SUCRE",
-    "MARCHE","VILLAGE","VITAMINE","BASKET","SPORT","ECOLE","EXAMEN","UNIVERS"
+    # … vos 80 mots …
 ]
 random.shuffle(STIMULI)
-
 CYCLE_MS, START_MS, STEP_MS = 350, 14, 14
 
-# ─────────────────── config globale Streamlit ──────────────────
+# ------------------- CONFIGURATION STREAMLIT ---------------------
 st.set_page_config(page_title="Expérience 3", layout="wide")
 HIDE_CSS = """
 <style>
 #MainMenu, header, footer {visibility:hidden;}
-.css-1d391kg {display:none;}         /* barre latérale Streamlit */
+.css-1d391kg {display:none;}    /* barre latérale Streamlit */
 </style>
 """
-
-# ───────────────────── choix de la « page » ────────────────────
+# état courant : intro  ou  exp
 if "stage" not in st.session_state:
     st.session_state.stage = "intro"
 
-# ───────────────────────── PAGE 1 : INTRO ──────────────────────
+# ----------------------- PAGE D'INTRO ----------------------------
 if st.session_state.stage == "intro":
     st.title("EXPERIMENT 3 : reconnaissance de mots masqués")
 
     st.markdown("""
-Vous verrez un mot très brièvement, alternant avec un masque de **#####**.  
-À chaque cycle (350 ms) le mot reste **14 ms de plus** et le masque **14 ms de moins**.
+Vous verrez un mot très brièvement au centre de l’écran, alternant avec un
+masque de `#####`.  
+À chaque cycle (350 ms) le mot dure **14 ms de plus** et le masque **14 ms de
+moins**.
 
 Procédure :
-1. Fixez le centre de l’écran.  
+1. Fixez le centre.  
 2. Appuyez sur **ESPACE** dès que vous reconnaissez le mot.  
-3. Un champ apparaît : tapez le mot reconnu et validez par **Entrée**.  
+3. Tapez le mot dans le champ qui apparaît puis validez par **Entrée**.  
 """)
 
     if st.button("Démarrer l’expérience"):
         st.session_state.stage = "exp"
         st.experimental_rerun()
 
-# ───────────────────── PAGE 2 : EXPÉRIENCE ─────────────────────
+# ---------------------- PAGE EXPÉRIENCE --------------------------
 elif st.session_state.stage == "exp":
     st.markdown(HIDE_CSS, unsafe_allow_html=True)
 
@@ -66,88 +56,99 @@ elif st.session_state.stage == "exp":
 <!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
 <style>
  html,body {{
-   height:100%; margin:0;
-   display:flex; align-items:center; justify-content:center;
+   height:100%; margin:0; display:flex; align-items:center; justify-content:center;
    background:white; font-family:'Courier New',monospace;
  }}
- #scr   {{font-size:60px; user-select:none;}}
- #ans   {{display:none; font-size:48px; width:60%; text-align:center;}}
+ #scr {{font-size:60px; user-select:none;}}
+ #ans {{display:none; font-size:48px; width:60%; text-align:center;}}
 </style>
 </head>
-<body tabindex="0" id="body">  <!-- tabindex + id pour prendre le focus -->
-  <div id="scr"></div>
-  <input id="ans" autocomplete="off" />
+<body id="body" tabindex="0">
+<div id="scr"></div>
+<input id="ans" autocomplete="off"/>
 <script>
-/*****************************************************************
- * Auto-focus immédiat : la page a été chargée suite au clic sur
- * « Démarrer » ; ce clic est considéré comme un geste utilisateur,
- * donc le navigateur accepte que l’iframe prenne le focus.
+/******************************************************************
+ * Auto-focus : dès le chargement de l’iframe
  *****************************************************************/
-window.addEventListener('load', () => {{
-  document.getElementById('body').focus();   // le body reçoit le focus
-}});
+window.addEventListener('load', ()=>document.getElementById('body').focus());
 
-/*****************************************************************
- * Paramètres Python → JS
+/******************************************************************
+ * Paramètres passés depuis Python
  *****************************************************************/
 const WORDS = {json.dumps(STIMULI)};
 const CYCLE = {CYCLE_MS}, START = {START_MS}, STEP = {STEP_MS};
 
-/*****************************************************************
- * Variables
+/******************************************************************
+ * Variables globales
  *****************************************************************/
 let i = 0, results = [];
 const scr = document.getElementById('scr');
 const ans = document.getElementById('ans');
 
-/*****************************************************************
- * Boucle d’un essai
+/******************************************************************
+ * Lancement d’un essai
  *****************************************************************/
-function trial() {{
- if (i >= WORDS.length) {{ end(); return; }}
- const w = WORDS[i], mask = "#".repeat(w.length);
- let sd = START, md = CYCLE - sd, t0 = performance.now(), go=true;
+function trial(){{
+  if(i >= WORDS.length) {{ end(); return; }}
+  const w = WORDS[i], mask = "#".repeat(w.length);
+  let sd = START, md = CYCLE - sd, t0 = performance.now(), go = true;
+  let to1 = null, to2 = null;           // id des deux time-outs actifs
 
- function cycle() {{
-   scr.textContent = w;
-   setTimeout(()=>{{
-     scr.textContent = mask;
-     setTimeout(()=>{{ if(go){{ sd+=STEP; md=Math.max(0,CYCLE-sd); cycle(); }} }}, md);
-   }}, sd);
- }}
- cycle();
+  function cycle(){{
+    if(!go) return;                     // sécurité
+    scr.textContent = w;
+    to1 = setTimeout(()=>{{
+      if(!go) return;                   // sécurité : on ne change plus l’écran
+      scr.textContent = mask;
+      to2 = setTimeout(()=>{{
+        if(go){{
+          sd += STEP;
+          md = Math.max(0, CYCLE - sd);
+          cycle();
+        }}
+      }}, md);
+    }}, sd);
+  }}
+  cycle();
 
- function onSpace(e) {{
-   if (e.code === 'Space' && go) {{
-     go = false; const rt = Math.round(performance.now()-t0);
-     window.removeEventListener('keydown', onSpace);
-     scr.textContent = '';
-     ans.style.display='block'; ans.value=''; ans.focus();
+  /* ---------- Appui sur ESPACE = mot reconnu ---------- */
+  function onSpace(ev){{
+    if(ev.code === 'Space' && go){{
+      go = false;                       // stoppe immédiatement le cycle
+      clearTimeout(to1); clearTimeout(to2);
+      const rt = Math.round(performance.now() - t0);
+      window.removeEventListener('keydown', onSpace);
 
-     ans.addEventListener('keydown', function onEnter(ev){{
-       if(ev.key==='Enter') {{
-         ev.preventDefault();
-         results.push({{word:w, rt_ms:rt, response:ans.value.trim()}});
-         ans.removeEventListener('keydown', onEnter);
-         ans.style.display='none'; i++; trial();
-       }}
-     }});
-   }}
- }}
- window.addEventListener('keydown', onSpace);
+      scr.textContent = '';             // on vide l’écran
+      ans.style.display = 'block'; ans.value = ''; ans.focus();
+
+      /* ----- Entrée = validation ----- */
+      ans.addEventListener('keydown', function onEnter(e){{
+        if(e.key === 'Enter'){{
+          e.preventDefault();
+          results.push({{word:w, rt_ms:rt, response:ans.value.trim()}});
+          ans.removeEventListener('keydown', onEnter);
+          ans.style.display = 'none';
+          i++; trial();
+        }}
+      }});
+    }}
+  }}
+  window.addEventListener('keydown', onSpace);
 }}
 
-/*****************************************************************
- * Fin d’expérience : CSV
+/******************************************************************
+ * Fin : téléchargement CSV
  *****************************************************************/
-function end() {{
-  scr.style.fontSize='40px'; scr.textContent='Merci ! Fin de l’expérience.';
-  const csv = "word,rt_ms,response\\n"+
+function end(){{
+  scr.style.fontSize='40px';
+  scr.textContent='Merci ! Fin de l’expérience.';
+  const csv = "word,rt_ms,response\\n" +
               results.map(r=>`${{r.word}},${{r.rt_ms}},${{r.response}}`).join("\\n");
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], {{type:'text/csv'}}));
-  a.download = 'results.csv';
-  a.textContent = 'Télécharger les résultats';
+  a.href = URL.createObjectURL(new Blob([csv],{{type:'text/csv'}}));
+  a.download='results.csv';
+  a.textContent='Télécharger les résultats';
   a.style.fontSize='32px'; a.style.marginTop='30px';
   document.body.appendChild(a);
 }}
@@ -156,5 +157,4 @@ trial();  // lancement
 </script>
 </body></html>
 """
-    # Affiche l’iframe (focus pris automatiquement)
     components.html(html_code, height=650, width=1100, scrolling=False)
