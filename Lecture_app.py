@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Progressive-demasking (Streamlit + JavaScript)
-– La zone de saisie n’apparaît qu’après Espace et disparaît après Entrée
+Progressive-demasking : la barre de saisie apparaît seulement après <Espace>,
+puis disparaît dès validation (Entrée).
 """
 import json, random, uuid, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
 
-# ───────── PARAMÈTRES EXPÉRIMENTAUX ──────────────────────────────────
+# ───────── PARAMÈTRES ────────────────────────────────────────────────────
 CYCLE_MS, STEP_MS, MASK_CHAR = 350, 14, "#"
 
 STIMULI = [
@@ -17,19 +17,22 @@ STIMULI = [
 ]
 random.shuffle(STIMULI)
 
-# ───────── ÉTAT DE SESSION ───────────────────────────────────────────
+# ───────── ÉTAT STREAMLIT ────────────────────────────────────────────────
 s = st.session_state
-if "page" not in s:
-    s.page, s.idx, s.phase, s.rt, s.results = "intro", 0, "js", None, []
+if "stage" not in s:          # initialisation la toute 1re fois
+    s.stage   = "intro"       # intro ▸ trial ▸ end
+    s.idx     = 0             # index du mot courant
+    s.phase   = "js"          # js ▸ typing
+    s.rt_ms   = None
+    s.results = []
 
-# ───────── CHAMP CACHÉ (réception JS → Python) ───────────────────────
+# ───────── CHAMP CACHÉ INDISPENSABLE (invisible) ─────────────────────────
 def hidden_receiver():
-    st.markdown("<style>#receiver_input{{display:none;}}</style>",
-                unsafe_allow_html=True)
-    st.text_input("", key="receiver_input", label_visibility="collapsed")
+    st.markdown("<style>#receiver{display:none;}</style>", unsafe_allow_html=True)
+    st.text_input("", key="receiver", label_visibility="collapsed")
 
-# ───────── COMPOSANT JS (demasking) ──────────────────────────────────
-def demask_component(word: str, idx: int):
+# ───────── COMPOSANT JS : progressive demasking ──────────────────────────
+def demask_component(word: str, i: int):
     mask = MASK_CHAR * len(word)
 
     html = f"""
@@ -37,109 +40,111 @@ def demask_component(word: str, idx: int):
                       font-family:monospace;margin-top:25vh;"></div>
 
 <script>
+/* paramètres passés depuis Python */
 const WORD  = "{word}";
 const MASK  = "{mask}";
 const CYCLE = {CYCLE_MS};
 const STEP  = {STEP_MS};
 
-let start = performance.now();
-let div   = document.getElementById("stim");
-let stop  = false;
-let rafID = null;
+let start   = performance.now();
+let stop    = false;
+let rafID   = null;
+const div   = document.getElementById("stim");
 
-/* --------- boucle frame-lockée --------- */
+/* boucle frame-lockée */
 function flip(ts) {{
-    if (stop) return;
-    const elapsed = ts - start;
-    const i       = Math.floor(elapsed / CYCLE);
-    const dur     = Math.min(STEP * (i + 1), CYCLE);
-    div.textContent = (elapsed % CYCLE) < dur ? WORD : MASK;
-    rafID = requestAnimationFrame(flip);
+  if(stop) return;
+  const elapsed = ts - start;
+  const idx     = Math.floor(elapsed / CYCLE);
+  const dur     = Math.min(STEP * (idx + 1), CYCLE);
+  div.textContent = (elapsed % CYCLE) < dur ? WORD : MASK;
+  rafID = requestAnimationFrame(flip);
 }}
 rafID = requestAnimationFrame(flip);
 
-/* --------- fin d’essai --------- */
-function endTrial() {{
-    stop = true;
-    cancelAnimationFrame(rafID);
-    div.textContent = "";
-    div.style.display = "none";
-    const rt = Math.round(performance.now() - start);
+/* fin d’essai : appelée à l’appui sur Espace */
+function finish() {{
+  stop = true;
+  cancelAnimationFrame(rafID);
+  div.textContent = "";
+  div.style.display = "none";
+  const rt = Math.round(performance.now() - start);
 
-    const hidden = window.parent.document.getElementById("receiver_input");
-    if (hidden) {{
-        hidden.value = JSON.stringify({{idx: {idx}, rt: rt}});
-        hidden.dispatchEvent(new Event('input', {{bubbles:true}}));
-    }}
+  /* écrit le JSON dans le champ caché Streamlit */
+  const hidden = window.parent.document.getElementById("receiver");
+  if(hidden) {{
+      hidden.value = JSON.stringify({{ "idx": {i}, "rt": rt }});
+      hidden.dispatchEvent(new Event('input', {{ bubbles:true }}));
+  }}
 }}
 
-/* --------- écoute barre Espace --------- */
-document.addEventListener('keydown', (e) => {{
-    if (e.code === 'Space' || e.key === ' ') {{
-        endTrial();
-    }}
+/* écoute barre espace */
+document.addEventListener('keydown', e => {{
+  if(e.code === 'Space' || e.key === ' ') finish();
 }});
 </script>
 """
-    components.html(html, height=400, scrolling=False, key=f"stim_{idx}")
+    components.html(html, height=400, scrolling=False)
 
-# ───────── PAGE INTRO ────────────────────────────────────────────────
+# ───────── PAGE INTRO ────────────────────────────────────────────────────
 def page_intro():
     st.title("Tâche de dévoilement progressif – en ligne")
     st.markdown(
-        "Cliquez sur **Démarrer**. Un mot se dévoilera peu à peu. "
-        "Dès que vous l’avez reconnu, appuyez sur la **barre Espace** ; "
-        "la zone de réponse apparaîtra alors. Tapez le mot puis validez "
-        "par **Entrée**."
+        "Cliquez sur **Démarrer**. Un mot se dévoile progressivement ; "
+        "dès que vous l’avez reconnu, appuyez sur la **barre Espace**. "
+        "Une zone de saisie apparaîtra ; tapez le mot et validez par **Entrée**."
     )
     if st.button("Démarrer"):
-        s.page, s.phase = "trial", "js"
+        s.stage, s.phase = "trial", "js"
         st.rerun()
 
-# ───────── PAGE TRIAL ────────────────────────────────────────────────
+# ───────── PAGE TRIAL : un essai ────────────────────────────────────────
 def page_trial():
-    if s.idx >= len(STIMULI):
-        s.page = "end"; st.rerun(); return
+    if s.idx >= len(STIMULI):          # tous les mots faits
+        s.stage = "end"; st.rerun(); return
 
     word = STIMULI[s.idx]
-    hidden_receiver()                 # champ invisible présent en permanence
-    msg = s.get("receiver_input", "")
+    hidden_receiver()                  # champ caché toujours présent
+    msg = s.get("receiver", "")
 
     # Phase 1 : présentation JS
     if s.phase == "js":
         demask_component(word, s.idx)
-        if msg.startswith("{"):
-            data = json.loads(msg)
-            s.rt = data["rt"]
-            s.phase            = "typing"
-            s["receiver_input"] = ""   # reset
+        if msg.startswith("{"):        # JSON reçu depuis le JS
+            data  = json.loads(msg)
+            s.rt_ms      = data["rt"]
+            s.phase      = "typing"    # on passe à la saisie
+            s["receiver"] = ""         # réinitialise le champ
             st.rerun()
 
-    # Phase 2 : zone de saisie
+    # Phase 2 : zone de réponse visible
     elif s.phase == "typing":
-        st.write(f"Temps de réaction : **{s.rt} ms**")
-        typed = st.text_input("Tapez le mot reconnu :", key=f"inp_{s.idx}")
-        if typed:
+        st.write(f"Temps de réaction : **{s.rt_ms} ms**")
+        typed = st.text_input("Tapez le mot reconnu puis Entrée :",
+                              key=f"answer_{s.idx}")
+        if typed:                      # validation par Entrée
             s.results.append(dict(
                 stimulus = word,
                 response = typed.upper(),
-                correct  = typed.upper() == word,
-                rt_ms    = s.rt
+                correct  = (typed.upper() == word),
+                rt_ms    = s.rt_ms
             ))
-            s.idx   += 1
-            s.phase  = "js"
+            s.idx  += 1                # mot suivant
+            s.phase = "js"
             st.rerun()
 
-# ───────── PAGE FIN ─────────────────────────────────────────────────
+# ───────── PAGE FIN ─────────────────────────────────────────────────────
 def page_end():
     st.title("Expérience terminée – merci !")
     df = pd.DataFrame(s.results)
     st.dataframe(df, use_container_width=True)
-    st.download_button("📥 Télécharger les résultats (.csv)",
+    st.download_button(
+        "📥 Télécharger les résultats (.csv)",
         df.to_csv(index=False).encode("utf-8"),
         file_name=f"demask_{uuid.uuid4()}.csv",
-        mime="text/csv")
+        mime="text/csv"
+    )
     st.success("Vous pouvez fermer l’onglet.")
 
-# ───────── ROUTAGE ───────────────────────────────────────────────────
-{"intro": page_intro, "trial": page_trial, "end": page_end}[s.page]()
+# ───────── ROUTAGE GLOBAL ───────────────────────────────────────────────
+{"intro": page_intro, "trial": page_trial, "end": page_end}[s.stage]()
