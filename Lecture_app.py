@@ -163,7 +163,7 @@ function endExperiment() {
   a.style.fontSize = '32px';
   a.style.marginTop = '30px';
   document.body.appendChild(a);
-}
+}}
 
 trial();  // lancement
 </script>
