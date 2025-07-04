@@ -1,54 +1,53 @@
 # -*- coding: utf-8 -*-
 """
 Progressive-demasking (Streamlit + JS)
-champ de réponse : visible UNIQUEMENT après <Espace>,
-retiré immédiatement après validation <Entrée>.
+– Zone de saisie réellement absente avant <Espace>
+– Zone supprimée juste après validation <Entrée>
 """
 import json, random, uuid, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
 
-# ─── paramètres ──────────────────────────────────────────────────────
+# ───── Paramètres ────────────────────────────────────────────────────
 CYCLE_MS, STEP_MS, MASK_CHAR = 350, 14, "#"
-STIMULI = [
-    "AVION", "BALAI", "CARTE", "CHAUD", "CRANE", "GARDE", "LIVRE", "MERCI",
-    "NAGER", "PARLE", "PORTE", "PHOTO", "RADIO", "ROULE", "SALON", "SUCRE",
-    "TABLE", "TIGRE", "VIVRE", "VOILE"
+WORDS = [
+    "AVION","BALAI","CARTE","CHAUD","CRANE","GARDE","LIVRE","MERCI","NAGER","PARLE",
+    "PORTE","PHOTO","RADIO","ROULE","SALON","SUCRE","TABLE","TIGRE","VIVRE","VOILE"
 ]
-random.shuffle(STIMULI)
+random.shuffle(WORDS)
 
-# ─── état ------------------------------------------------------------------
+# ───── État de session ───────────────────────────────────────────────
 s = st.session_state
-if "stage" not in s:            # première exécution
-    s.stage   = "intro"         # intro ▸ trial ▸ end
-    s.idx     = 0               # index mot courant
-    s.rt_ms   = None
+if "page" not in s:
+    s.page = "intro"             # intro ▸ trial ▸ end
+    s.i    = 0                   # index du mot
+    s.rt   = None
+    s.show_box = False           # faut-il afficher la zone ?
+    s.answer_ready = False
     s.results = []
-    s.show_box = False          # le champ de réponse doit-il être affiché ?
+    s.box_ph = st.empty()        # placeholder permanent pour la zone
 
-# ─── champ caché (réception JSON JS → Py) ----------------------------------
+# ───── Champ caché pour recevoir le RT depuis JS ─────────────────────
 st.markdown("<style>#receiver{display:none;}</style>", unsafe_allow_html=True)
 hidden = st.text_input("", key="receiver", label_visibility="collapsed")
 
-# ─── composant JS (mot / masque) -------------------------------------------
-RAW_JS = """
+# ───── JavaScript (sans accolade à échapper) ─────────────────────────
+JS_TEMPLATE = """
 <div id='stim' style='font-size:64px;text-align:center;
                       font-family:monospace;margin-top:25vh;'></div>
-
 <script>
 const WORD  = "%%WORD%%";
 const MASK  = "%%MASK%%";
 const CYCLE = %%CYCLE%%;
 const STEP  = %%STEP%%;
-let start = performance.now();
-let stop  = false;
-let rafID = null;
+let start = performance.now(), stop=false;
 const div = document.getElementById('stim');
+let rafID = null;
 
 function flip(ts){
   if(stop) return;
-  const e   = ts - start;
-  const i   = Math.floor(e / CYCLE);
-  const d   = Math.min(STEP*(i+1), CYCLE);
+  const e = ts - start,
+        i = Math.floor(e/CYCLE),
+        d = Math.min(STEP*(i+1), CYCLE);
   div.textContent = (e % CYCLE) < d ? WORD : MASK;
   rafID = requestAnimationFrame(flip);
 }
@@ -57,90 +56,99 @@ rafID = requestAnimationFrame(flip);
 function finish(){
   stop = true;
   cancelAnimationFrame(rafID);
-  div.textContent = "";
-  div.style.display = "none";
-  const rt = Math.round(performance.now() - start);
-  const hid = window.parent.document.getElementById('receiver');
-  if(hid){
-      hid.value = JSON.stringify({rt:rt});
-      hid.dispatchEvent(new Event('input', {bubbles:true}));
+  div.textContent  = "";
+  div.style.display= "none";
+  const rt = Math.round(performance.now()-start);
+  const tgt = window.parent.document.getElementById('receiver');
+  if(tgt){
+      tgt.value = JSON.stringify({rt:rt});
+      tgt.dispatchEvent(new Event('input',{bubbles:true}));
   }
 }
-document.addEventListener('keydown', ev=>{
-  if(ev.code==='Space' || ev.key===' ') finish();
+document.addEventListener('keydown', e=>{
+  if(e.code==='Space' || e.key===' ') finish();
 });
 </script>
 """
 
-def js_stimulus(word: str):
-    html = (RAW_JS
+def show_js(word:str):
+    html = (JS_TEMPLATE
             .replace("%%WORD%%", word)
-            .replace("%%MASK%%", MASK_CHAR * len(word))
+            .replace("%%MASK%%", MASK_CHAR*len(word))
             .replace("%%CYCLE%%", str(CYCLE_MS))
             .replace("%%STEP%%",  str(STEP_MS)))
     components.html(html, height=400, scrolling=False)
 
-# ─── pages -----------------------------------------------------------------
+# ───── Callback : Entrée dans la zone de réponse ─────────────────────
+def on_validate():
+    s.answer_ready = True
+
+# ───── PAGES ─────────────────────────────────────────────────────────
 def page_intro():
     st.title("Tâche de dévoilement progressif – en ligne")
-    st.write(
-        "1. Le mot est d’abord masqué puis se dévoile peu à peu.\n"
-        "2. Dès que vous le reconnaissez, appuyez sur **Espace**.\n"
-        "3. Tapez alors le mot et appuyez sur **Entrée**."
-    )
+    st.write("• Le mot se dévoile peu à peu.\n"
+             "• Appuyez sur **Espace** dès que vous l’avez reconnu.\n"
+             "• Tapez le mot et validez par **Entrée**.")
     if st.button("Démarrer"):
-        s.stage, s.show_box = "trial", False
+        s.page = "trial"
+        s.show_box = False
         st.experimental_rerun()
 
 def page_trial():
-    if s.idx >= len(STIMULI):
-        s.stage = "end"; st.experimental_rerun(); return
-
-    word = STIMULI[s.idx]
-
-    # 1) présentation (si la boîte n’est pas encore affichée)
+    # Si zone de réponse ne doit pas être visible → on s’assure qu’elle est vide
     if not s.show_box:
-        js_stimulus(word)
+        s.box_ph.empty()
 
-    # 2) si le JS vient d’envoyer le RT → afficher la boîte
+    # Fin d’expérience ?
+    if s.i >= len(WORDS):
+        s.page = "end"; st.experimental_rerun(); return
+
+    word = WORDS[s.i]
+
+    # Étape 1 : affichage / attente barre espace
+    if not s.show_box:
+        show_js(word)
+
+    # Le JS vient-il d’envoyer le RT ?
     if hidden.startswith("{") and not s.show_box:
-        s.rt_ms = json.loads(hidden)["rt"]
+        s.rt       = json.loads(hidden)["rt"]
+        s.receiver = ""          # reset
         s.show_box = True
-        st.session_state.receiver = ""   # reset
         st.experimental_rerun()
 
-    # 3) gérer la boîte de réponse uniquement si show_box == True
+    # Étape 2 : affichage de la zone de saisie
     if s.show_box:
-        st.write(f"Temps de réaction : **{s.rt_ms} ms**")
-        placeholder = st.empty()         # conteneur temporaire
+        st.write(f"Temps de réaction : **{s.rt} ms**")
+        s.box_ph.text_input("Votre réponse :", key=f"ans_{s.i}",
+                            on_change=on_validate)
 
-        # affiche la zone de saisie dans le placeholder
-        answer = placeholder.text_input("Votre réponse :", key=f"a_{s.idx}")
-
-        # dès qu’on validera (Entrée), answer sera non-vide
-        if answer:
+        # Après validation (Entrée)
+        if s.answer_ready:
+            typed = s.get(f"ans_{s.i}", "")
+            s.answer_ready = False
             s.results.append(dict(
                 stimulus = word,
-                response = answer.upper(),
-                correct  = answer.upper() == word,
-                rt_ms    = s.rt_ms
+                response = typed.upper(),
+                correct  = typed.upper() == word,
+                rt_ms    = s.rt
             ))
-            placeholder.empty()          # SUPPRIME la zone de saisie
-            del st.session_state[f"a_{s.idx}"]  # nettoie le key
-            s.idx     += 1
-            s.show_box = False           # repasse en mode présentation
+            # Nettoyage
+            if f"ans_{s.i}" in s:
+                del s[f"ans_{s.i}"]
+            s.box_ph.empty()
+            s.i += 1
+            s.show_box = False
             st.experimental_rerun()
 
 def page_end():
-    st.title("Expérience terminée – merci !")
+    st.title("Merci pour votre participation !")
     df = pd.DataFrame(s.results)
     st.dataframe(df, use_container_width=True)
-    st.download_button(
-        "📥 Télécharger les résultats (.csv)",
-        df.to_csv(index=False).encode("utf-8"),
-        file_name=f"demask_{uuid.uuid4()}.csv",
-        mime="text/csv")
+    st.download_button("📥 Télécharger les résultats",
+                       df.to_csv(index=False).encode("utf-8"),
+                       file_name=f"demask_{uuid.uuid4()}.csv",
+                       mime="text/csv")
     st.success("Vous pouvez fermer l’onglet.")
 
-# ─── routage ----------------------------------------------------------------
-{"intro": page_intro, "trial": page_trial, "end": page_end}[s.stage]()
+# ───── Routage ───────────────────────────────────────────────────────
+{"intro": page_intro, "trial": page_trial, "end": page_end}[s.page]()
