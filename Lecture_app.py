@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Expérience 3 – Progressive-demasking (Streamlit + JS)
-Stimulus retiré dès l’appui sur <Espace>.
+Expérience 3 – Progressive-demasking (Streamlit + JavaScript)
+Le mot/masque disparaît dès que le participant appuie sur <Espace>.
+© 2024 – usage pédagogique libre
 """
 import json, random, uuid, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
 
-# ───── paramètres généraux ──────────────────────────────────────────
-CYCLE_MS, STEP_MS, MASK_CHAR = 350, 14, "#"
+# ─── Paramètres généraux ─────────────────────────────────────────────
+CYCLE_MS  = 350          # durée d’un cycle
+STEP_MS   = 14           # +14 ms mot  / –14 ms masque
+MASK_CHAR = "#"          # caractère du masque
 
 STIMULI = [
     "AVION","BALAI","CARTE","CHAUD","CRANE","GARDE","LIVRE","MERCI","NAGER","PARLE",
@@ -17,33 +20,42 @@ STIMULI = [
 ]
 random.shuffle(STIMULI)
 
-# ───── état session ────────────────────────────────────────────────
+# ─── Initialisation de session ───────────────────────────────────────
 s = st.session_state
 if "page" not in s:
-    s.page, s.i, s.wait_js, s.typing, s.rt, s.results = "intro", 0, False, False, None, []
+    s.page     = "intro"
+    s.index    = 0
+    s.wait_js  = False
+    s.typing   = False
+    s.rt_ms    = None
+    s.results  = []
 
-# ───── composant récepteur (JS → Python) ───────────────────────────
+# ─── Composant récepteur : récupère le message JS → Python ───────────
 def receiver():
     components.html(
         """
 <script>
-window.addEventListener("message", evt =>{
-  if(evt.data && evt.data.source === "demask"){
-      const target = window.parent.document.getElementById("receiver_input");
-      if(target){
-         target.value = JSON.stringify(evt.data);
-         target.dispatchEvent(new Event('input',{bubbles:true}));
-      }
-  }
+window.addEventListener("message", (evt) => {
+    if (evt.data && evt.data.source === "demask") {
+        const hidden = window.parent.document.getElementById("receiver_input");
+        if (hidden) {
+            hidden.value = JSON.stringify(evt.data);
+            hidden.dispatchEvent(new Event('input', {bubbles:true}));
+        }
+    }
 });
 </script>
-""", height=0)
+""",
+        height=0
+    )
 
-# ───── composant stimulus avec retrait immédiat ────────────────────
+# ─── Composant stimulus : alternance mot/masque + disparition ───────
 def demask(word: str):
     mask = MASK_CHAR * len(word)
+
     html = f"""
-<div id="stim" style="font-size:64px;text-align:center;font-family:monospace;margin-top:25vh;"></div>
+<div id="stim" style="font-size:64px;text-align:center;
+                      font-family:monospace;margin-top:25vh;"></div>
 
 <script>
 const WORD     = "{word}";
@@ -51,86 +63,102 @@ const MASK     = "{mask}";
 const CYCLE_MS = {CYCLE_MS};
 const STEP_MS  = {STEP_MS};
 
-let t0   = performance.now();
-let div  = document.getElementById("stim");
-let quit = false;                        // devient true après <Espace>
+let start   = performance.now();
+let divElem = document.getElementById("stim");
+let stop    = false;
 
-/* boucle frame-lockée */
-function flip(ts){{
-   if(quit) return;                      // on a déjà appuyé Espace
-   const e = ts - t0;
-   const idx = Math.floor(e/CYCLE_MS);
-   const stimDur = Math.min(STEP_MS*(idx+1), CYCLE_MS);
-   const show = (e % CYCLE_MS) < stimDur;
-   div.textContent = show ? WORD : MASK;
-   requestAnimationFrame(flip);
+/* Boucle frame-lockée */
+function flip(ts) {{
+    if (stop) return;
+    const elapsed  = ts - start;
+    const cycleIdx = Math.floor(elapsed / CYCLE_MS);
+    const stimDur  = Math.min(STEP_MS * (cycleIdx + 1), CYCLE_MS);
+    const pos      = elapsed % CYCLE_MS;
+    const showWord = pos < stimDur;
+    divElem.textContent = showWord ? WORD : MASK;
+    requestAnimationFrame(flip);
 }}
 requestAnimationFrame(flip);
 
-/* appui Espace = réponse + effacement */
-window.addEventListener("keydown", ev=>{
-    if(ev.code === "Space" && !quit){{
-        quit = true;
-        div.textContent = "";                    // ① efface le mot/masque
-        const rt = performance.now() - t0;
-        window.parent.postMessage({{             // ② envoie RT
-            source:"demask", word:WORD, rt:Math.round(rt)
-        }},"*");
+/* Réponse avec la barre Espace */
+window.addEventListener("keydown", (e) => {{
+    if (e.code === "Space" && !stop) {{
+        stop = true;
+        divElem.textContent = "";                 /* efface mot + masque */
+        const rt = performance.now() - start;
+        window.parent.postMessage({{
+            source: "demask",
+            word  : WORD,
+            rt    : Math.round(rt)
+        }}, "*");
     }}
-});
+}});
 </script>
 """
     components.html(html, height=400, scrolling=False)
 
-# ───── pages ───────────────────────────────────────────────────────
-def intro():
+# ─── Pages Streamlit ─────────────────────────────────────────────────
+def page_intro():
     st.title("Tâche de dévoilement progressif – en ligne")
-    st.markdown("""
-Appuyez sur **Démarrer**. Le mot se dévoilera peu à peu ; appuyez sur la
-**barre Espace** dès que vous l’avez reconnu, puis saisissez-le.
-""")
+    st.markdown(
+        "Cliquez sur **Démarrer**. \n"
+        "Le mot apparaît progressivement ; dès que vous l’avez reconnu, "
+        "appuyez sur la **barre Espace** puis tapez le mot."
+    )
     if st.button("Démarrer"):
-        s.page, s.wait_js = "trial", True
+        s.page = "trial"
+        s.wait_js = True
         st.rerun()
 
-def trial():
-    if s.i >= len(STIMULI):
-        s.page = "end"; st.rerun(); return
-    word = STIMULI[s.i]
+def page_trial():
+    if s.index >= len(STIMULI):
+        s.page = "end"
+        st.rerun()
+        return
 
-    if s.wait_js:                               # phase JS active
+    word = STIMULI[s.index]
+
+    # Phase 1 : affichage JS
+    if s.wait_js:
         receiver()
         demask(word)
-        msg = st.text_input("", key="receiver_input",
-                            label_visibility="collapsed")
-        if msg:
-            data = json.loads(msg)
-            s.rt = data["rt"]
-            s.wait_js, s.typing = False, True
-            s["receiver_input"] = ""
+        js_msg = st.text_input("", key="receiver_input",
+                               label_visibility="collapsed")
+        if js_msg:
+            data = json.loads(js_msg)
+            s.rt_ms   = data["rt"]
+            s.wait_js = False
+            s.typing  = True
+            s["receiver_input"] = ""          # reset
             st.rerun()
 
-    elif s.typing:                              # saisie du mot
-        st.write(f"Temps de réaction : **{s.rt} ms**")
-        typed = st.text_input("Tapez le mot reconnu :", key=f"t_{s.i}")
+    # Phase 2 : saisie du mot
+    elif s.typing:
+        st.write(f"Temps de réaction : **{s.rt_ms} ms**")
+        typed = st.text_input("Tapez le mot reconnu :", key=f"typed_{s.index}")
         if typed:
-            s.results.append(dict(stimulus=word,
-                                   response=typed.upper(),
-                                   correct=(typed.upper()==word),
-                                   rt_ms=s.rt))
-            s.i += 1
-            s.wait_js, s.typing = True, False
+            s.results.append(dict(
+                stimulus = word,
+                response = typed.upper(),
+                correct  = (typed.upper() == word),
+                rt_ms    = s.rt_ms
+            ))
+            s.index  += 1
+            s.wait_js = True
+            s.typing  = False
             st.rerun()
 
-def end():
-    st.title("Expérience terminée, merci !")
+def page_end():
+    st.title("Expérience terminée – merci !")
     df = pd.DataFrame(s.results)
     st.dataframe(df, use_container_width=True)
-    st.download_button("📥 Télécharger CSV",
+    st.download_button(
+        "📥 Télécharger les résultats (.csv)",
         df.to_csv(index=False).encode("utf-8"),
         file_name=f"demask_{uuid.uuid4()}.csv",
-        mime="text/csv")
+        mime="text/csv"
+    )
     st.success("Vous pouvez fermer l’onglet.")
 
-# ───── routage ─────────────────────────────────────────────────────
-{"intro": intro, "trial": trial, "end": end}[s.page]()
+# ─── Routage ─────────────────────────────────────────────────────────
+{"intro": page_intro, "trial": page_trial, "end": page_end}[s.page]()
