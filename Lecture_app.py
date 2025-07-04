@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Progressive-demasking (Streamlit + JS) – stimulus retiré à l’appui sur <Espace>
-— version robuste : contrôle JSON avant json.loads()
+Progressive-demasking (Streamlit + JavaScript)
+– La zone de saisie n’apparaît qu’après <Espace>
+– Elle disparaît dès la validation (Entrée)
 """
 import json, random, uuid, pandas as pd, streamlit as st
 import streamlit.components.v1 as components
 
-# ── paramètres ─────────────────────────────────────────────
+# ─── PARAMÈTRES ────────────────────────────────────────────
 CYCLE_MS, STEP_MS, MASK_CHAR = 350, 14, "#"
 
 STIMULI = [
@@ -17,13 +18,18 @@ STIMULI = [
 ]
 random.shuffle(STIMULI)
 
-# ── état session ───────────────────────────────────────────
+# ─── ÉTAT SESSION ──────────────────────────────────────────
 s = st.session_state
 if "page" not in s:
     s.page, s.idx, s.wait_js, s.typing, s.rt, s.results = "intro", 0, False, False, None, []
 
-# ── composant récepteur : JS → Python ----------------------
+# ─── COMPOSANT RÉCEPTEUR (caché) ──────────────────────────
 def receiver():
+    # CSS pour masquer complètement le champ caché
+    st.markdown(
+        """<style>#receiver_input{display:none !important;}</style>""",
+        unsafe_allow_html=True
+    )
     components.html(
         """
 <script>
@@ -38,12 +44,15 @@ window.addEventListener("message", evt => {
 });
 </script>
 """, height=0)
+    # Champ texte réellement caché
+    st.text_input("", key="receiver_input", label_visibility="collapsed", disabled=True)
 
-# ── composant stimulus -------------------------------------
+# ─── COMPOSANT STIMULUS (JS) ──────────────────────────────
 def demask(word: str):
     mask = MASK_CHAR * len(word)
     html = f"""
-<div id="stim" style="font-size:64px;text-align:center;font-family:monospace;margin-top:25vh;"></div>
+<div id="stim" style="font-size:64px;text-align:center;
+                      font-family:monospace;margin-top:25vh;"></div>
 
 <script>
 const WORD     = "{word}";
@@ -56,6 +65,7 @@ let div    = document.getElementById("stim");
 let stop   = false;
 let rafID  = null;
 
+/* Boucle frame-lockée */
 function flip(ts) {{
     if (stop) return;
     const e   = ts - start;
@@ -67,6 +77,7 @@ function flip(ts) {{
 }}
 rafID = requestAnimationFrame(flip);
 
+/* Appui barre Espace */
 window.addEventListener("keydown", e => {{
     if ((e.key === ' ' || e.code === 'Space') && !stop) {{
         stop = true;
@@ -83,13 +94,13 @@ window.addEventListener("keydown", e => {{
 """
     components.html(html, height=400, scrolling=False)
 
-# ── pages --------------------------------------------------
+# ─── PAGES ────────────────────────────────────────────────
 def page_intro():
     st.title("Tâche de dévoilement progressif – en ligne")
     st.markdown(
         "Cliquez sur **Démarrer**. Le mot se dévoile progressivement ; "
         "appuyez sur la **barre Espace** dès que vous l’avez reconnu, "
-        "puis tapez-le."
+        "puis tapez-le et validez par **Entrée**."
     )
     if st.button("Démarrer"):
         s.page, s.wait_js = "trial", True
@@ -101,31 +112,30 @@ def page_trial():
 
     word = STIMULI[s.idx]
 
-    # Phase JS
+    # 1. Phase JavaScript
     if s.wait_js:
         receiver()
         demask(word)
-        msg = st.text_input("", key="receiver_input", label_visibility="collapsed")
+        msg = s.get("receiver_input","")
         if msg and msg.strip().startswith("{"):
-            try:
-                data = json.loads(msg)
-                s.rt = data.get("rt", None)
-                s.wait_js, s.typing = False, True
-                s["receiver_input"] = ""      # reset
-                st.rerun()
-            except json.JSONDecodeError:
-                pass  # ignore valeurs non-JSON
+            data = json.loads(msg)
+            s.rt = data["rt"]
+            s.wait_js, s.typing = False, True
+            s["receiver_input"] = ""          # reset
+            st.rerun()
 
-    # Phase saisie
+    # 2. Phase de saisie (visible seulement ici)
     elif s.typing:
         st.write(f"Temps de réaction : **{s.rt} ms**")
-        typed = st.text_input("Tapez le mot reconnu :", key=f"typed_{s.idx}")
-        if typed:
+        typed = st.text_input("Tapez le mot reconnu puis Entrée :",
+                              key=f"typed_{s.idx}")
+        if typed:                             # validation par Entrée
             s.results.append(dict(
                 stimulus = word,
                 response = typed.upper(),
-                correct  = typed.upper() == word,
-                rt_ms    = s.rt))
+                correct  = (typed.upper() == word),
+                rt_ms    = s.rt
+            ))
             s.idx += 1
             s.wait_js, s.typing = True, False
             st.rerun()
@@ -140,5 +150,5 @@ def page_end():
         mime="text/csv")
     st.success("Vous pouvez fermer l’onglet.")
 
-# ── routage ------------------------------------------------
+# ─── ROUTAGE ──────────────────────────────────────────────
 {"intro": page_intro, "trial": page_trial, "end": page_end}[s.page]()
