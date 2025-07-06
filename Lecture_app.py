@@ -1,25 +1,25 @@
 # app.py
 # =============================================================
 # Évaluation Lecture / Écriture – Module 1
-# Infos générales + premier test vocabulaire + export CSV
-# + lancement en arrière-plan de get_stimuli()
+# (identique au script qui fonctionne)
+# + lancement en tâche de fond du tirage des 80 mots
 # =============================================================
 
 import streamlit as st
 import pandas as pd
 import uuid
-import threading                     # ← NEW
-from get_stimuli import get_stimuli  # ← NEW
+import threading
 
-# ---------- lance la sélection des 80 mots dès l’ouverture ------------
+# ---------- lancement différé du tirage ----------------------
 def _launch_stimuli():
     try:
+        from get_stimuli import get_stimuli   # import LÀ, pas en haut
         st.session_state["stimuli"] = get_stimuli()
         st.session_state["stimuli_ready"] = True
     except Exception as e:
         st.session_state["stimuli_error"] = str(e)
 
-if "stimuli_ready" not in st.session_state:            # ← NEW
+if "stimuli_ready" not in st.session_state:
     st.session_state.update(stimuli_ready=False, stimuli_error=None)
     threading.Thread(target=_launch_stimuli, daemon=True).start()
 
@@ -48,8 +48,6 @@ def main():
         participant_id = st.text_input(
             "Identifiant participant (facultatif : laissez vide pour qu’il soit généré)"
         )
-
-    # Génération d’un identifiant aléatoire si champ vide
     if participant_id.strip() == "":
         participant_id = str(uuid.uuid4())
 
@@ -77,15 +75,15 @@ def main():
     st.markdown("---")
 
     # ---------- 3. Construction du CSV ----------
-    data = {
+    df = pd.DataFrame({
         "participant_id": [participant_id],
         "age": [age],
         "sexe": [sexe],
         "etude": [etude],
         "test1_item": ["impétueux"],
         "test1_reponse": [reponse_vocab],
-    }
-    csv_bytes = pd.DataFrame(data).to_csv(index=False).encode("utf-8")
+    })
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
 
     # ---------- 4. Téléchargement ----------
     st.header("Téléchargement")
@@ -105,7 +103,7 @@ def main():
     if st.session_state.get("stimuli_ready"):
         st.success("Les 80 mots du module suivant sont déjà prêts ✅")
     elif st.session_state.get("stimuli_error"):
-        st.error("Erreur lors de la préparation des 80 mots :\n"
+        st.error("Échec préparation stimuli : "
                  + st.session_state["stimuli_error"])
 
 # -------------------------------------------------------------
