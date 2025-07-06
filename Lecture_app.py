@@ -1,213 +1,328 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – sélection adaptative vraiment « inratable ».
-  • On commence avec vos seuils stricts.
-  • S’il manque des mots, on détend peu à peu OLD20/PLD20 jusqu’à y arriver.
-  • Une fois qu’il y a ≥20 candidats par masque, on tire 20 mots uniques
-    dans chaque catégorie et on les mélange.
-  • S’il n’est toujours pas possible d’avoir 80 mots uniques, on autorise
-    l’échantillonnage AVEC remise (dernier recours).
+EXPÉRIENCE 3 : sélection adaptative de 80 mots (4 × 20)
+CSV UTF-8, séparateur « ; », décimales « . ».
+
+Le programme :
+1. charge le lexique (Lexique383.csv) placé à côté du script ;
+2. sélectionne 4 × 20 mots répondant à des contraintes OLD20 / PLD20
+   tout en équilibrant les médianes de fréquence, taille orthographique
+   et nombre de phonèmes ; les fenêtres sont élargies automatiquement
+   jusqu’à trouver une solution ;
+3. lance le protocole visuel (mot masqué progressivement) entièrement
+   en HTML / Javascript inséré dans Streamlit ;
+4. exporte les résultats au format CSV (séparateur « ; », décimales « . »).
+
+Auteur : ——————————————————————————
 """
 
-import json, random, itertools
-import numpy as np, pandas as pd
-import streamlit as st, streamlit.components.v1 as components
+from __future__ import annotations
 
-# ───────────────────────────────────────────────
-# 0. CONFIG STREAMLIT
-# ───────────────────────────────────────────────
-st.set_page_config(page_title="Expérience 3 – sélection adaptative", layout="wide")
-st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
-            unsafe_allow_html=True)
+import json
+import random
+from pathlib import Path
 
-# ───────────────────────────────────────────────
-# 1. CHARGEMENT / PRÉ-TRAITEMENT DU LEXIQUE
-# ───────────────────────────────────────────────
-CSV_FILE = "Lexique383.csv"
+import numpy as np
+import pandas as pd
+import streamlit as st
+from streamlit import components
+
+# ───────────────────────────── 0. CONFIG STREAMLIT ─────────────────────────── #
+st.set_page_config(page_title="Expérience 3", layout="wide")
+st.markdown(
+    """
+    <style>
+        #MainMenu, header, footer {visibility: hidden;}
+        .css-1d391kg {display: none;}   /* ancien sélecteur Streamlit */
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ─────────────────────────── 1. CHARGEMENT LEXIQUE ─────────────────────────── #
+CSV_FILE = Path(__file__).with_name("Lexique383.csv")
 
 @st.cache_data(show_spinner="Chargement du lexique…")
 def load_lexique() -> pd.DataFrame:
-    df = pd.read_csv(CSV_FILE, sep=";", decimal=".", encoding="utf-8",
-                     dtype=str, engine="python", on_bad_lines="skip")
+    """Charge le fichier Lexique383.csv, renomme et typage des colonnes utiles."""
+    if not CSV_FILE.exists():
+        st.error(f"Fichier « {CSV_FILE.name} » introuvable.")
+        st.stop()
 
-    # uniformise les noms de colonnes utiles
+    df = pd.read_csv(
+        CSV_FILE,
+        sep=";",
+        decimal=".",
+        dtype=str,
+        encoding="utf-8",
+        on_bad_lines="skip",
+        engine="python",
+    )
+
+    # Harmonisation des noms de colonnes
     ren = {}
     for col in df.columns:
-        c = col.lower()
-        if "ortho" in c or "word" in c or "étiquettes" in c: ren[col] = "word"
-        elif "old20" in c:   ren[col] = "old20"
-        elif "pld20" in c:   ren[col] = "pld20"
+        lc = col.lower()
+        if any(k in lc for k in ("étiquettes", "ortho", "word")):
+            ren[col] = "word"
+        elif "old20" in lc:
+            ren[col] = "old20"
+        elif "pld20" in lc:
+            ren[col] = "pld20"
+        elif "freqlemfilms2" in lc:
+            ren[col] = "freq"
+        elif "nblettres" in lc:
+            ren[col] = "let"
+        elif "nbphons" in lc:
+            ren[col] = "pho"
+
     df = df.rename(columns=ren)
 
-    need = {"word", "old20", "pld20"}
-    miss = need - set(df.columns)
-    if miss:
-        raise ValueError("Colonnes manquantes : " + ", ".join(miss))
+    required = {"word", "old20", "pld20", "freq", "let", "pho"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        st.error(f"Colonnes manquantes dans le lexique : {missing}")
+        st.stop()
 
-    df.word  = df.word.str.upper()
-    df.old20 = df.old20.astype(float)
-    df.pld20 = df.pld20.astype(float)
-    return df.dropna(subset=need)
+    df["word"] = df["word"].str.upper()
+    for c in required - {"word"}:
+        df[c] = df[c].astype(float)
 
-LEX = load_lexique()
+    return df.dropna(subset=required)
 
-# ───────────────────────────────────────────────
-# 2. SEUILS DE DÉPART + PAS D’ASSOUPLISSEMENT
-# ───────────────────────────────────────────────
-THR = dict(LO_old=1.11, HI_old=3.79, LO_pld=0.70, HI_pld=3.20)
-STEP = 0.10          # on détendra de ±0.10 à chaque tour
-MAX_STEP = 4.0       # old20 / pld20 sont compris ~0–4 ⇒ 4 ≈ « plus de limite »
+LEX: pd.DataFrame = load_lexique()
 
-# ───────────────────────────────────────────────
-# 3. SÉLECTION (assouplissement dynamique)
-# ───────────────────────────────────────────────
+# ─────────────────────── 2. MASQUES & FENÊTRES INITIALES ───────────────────── #
+MASKS = {
+    "LOW_OLD" :  LEX.old20 < 1.11,
+    "HIGH_OLD":  LEX.old20 > 3.79,
+    "LOW_PLD" :  LEX.pld20 < 0.70,
+    "HIGH_PLD":  LEX.pld20 > 3.20,
+}
+
+BASE_WIN = {
+    "freq": (0.44, 2.94),
+    "let":  (8.5,  9.5),
+    "pho":  (6.5,  7.5),
+}
+
+def enlarge(win: dict[str, tuple[float, float]], step: float) -> dict[str, tuple[float, float]]:
+    """Élargit toutes les fenêtres numériques d’une valeur ± step."""
+    return {k: (v[0] - step, v[1] + step) for k, v in win.items()}
+
+# ────────────────────── 3. SÉLECTION ADAPTATIVE DES MOTS ───────────────────── #
 @st.cache_data(show_spinner="Sélection des 80 mots…")
 def pick_stimuli() -> list[str]:
+    """Renvoie une liste aléatoire de 80 mots (4 × 20) répondant aux contraintes."""
     rng = np.random.default_rng()
-    thr = THR.copy()
 
-    while thr["LO_old"] < thr["HI_old"] and thr["LO_pld"] < thr["HI_pld"]:
-        # crée les masques avec les seuils courants
-        masks = {
-            "LOW_OLD" :  LEX.old20 < thr["LO_old"],
-            "HIGH_OLD":  LEX.old20 > thr["HI_old"],
-            "LOW_PLD" :  LEX.pld20 < thr["LO_pld"],
-            "HIGH_PLD":  LEX.pld20 > thr["HI_pld"],
-        }
+    step = 0.0
+    while step <= 2.0:                               # élargissement maximum ± 2
+        win = enlarge(BASE_WIN, step)
+        chosen: set[str] = set()
+        final: list[str] = []
+        success = True
 
-        sizes = {k: int(m.sum()) for k,m in masks.items()}
-        if all(s >= 20 for s in sizes.values()):
-            # suffisamment de candidats → essaye de constituer 80 mots uniques
-            for attempt in range(1_000):
-                chosen = set()
-                final  = []
-                # ordre aléatoire pour limiter les collisions
-                for name in random.sample(list(masks), 4):
-                    pool = LEX.loc[masks[name] & ~LEX.word.isin(chosen)].word.tolist()
-                    if len(pool) < 20:
-                        break
-                    final += rng.choice(pool, 20, replace=False).tolist()
-                    chosen = set(final)
+        for cond_name, cond_mask in MASKS.items():
+            pool = LEX.loc[cond_mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
 
-                if len(final) == 80:
-                    random.shuffle(final)
-                    return final
+            if len(pool) < 20:                       # impossible avec cette fenêtre
+                success = False
+                break
 
-            # après 1000 tentatives on accepte le doublon final :
-            chosen = set()
-            final  = []
-            for name in random.sample(list(masks), 4):
-                pool = LEX.loc[masks[name]].word.tolist()
-                final += rng.choice(pool, 20, replace=False).tolist()
+            # 10 000 listes de 20 indices
+            idx_samples = rng.choice(len(pool), size=(10_000, 20), replace=False)
+
+            med_freq = np.median(pool.freq.values[idx_samples], axis=1)
+            med_let  = np.median(pool.let .values[idx_samples], axis=1)
+            med_pho  = np.median(pool.pho .values[idx_samples], axis=1)
+
+            ok = (
+                (win["freq"][0] <= med_freq) & (med_freq <= win["freq"][1]) &
+                (win["let" ][0] <= med_let ) & (med_let  <= win["let" ][1]) &
+                (win["pho" ][0] <= med_pho ) & (med_pho  <= win["pho" ][1])
+            )
+
+            if ok.any():                             # échantillon parfait
+                best = int(np.flatnonzero(ok)[0])
+            else:                                    # meilleur compromis
+                penalty = (
+                    np.clip(win["freq"][0] - med_freq, 0, None) +
+                    np.clip(med_freq - win["freq"][1], 0, None) +
+                    np.clip(win["let" ][0] - med_let, 0, None) +
+                    np.clip(med_let  - win["let" ][1], 0, None) +
+                    np.clip(win["pho" ][0] - med_pho, 0, None) +
+                    np.clip(med_pho  - win["pho" ][1], 0, None)
+                )
+                best = int(penalty.argmin())
+                st.warning(f"{cond_name} : médianes approchées (pénalité {penalty[best]:.2f}).")
+
+            sample = pool.iloc[idx_samples[best]]
+            chosen.update(sample.word)
+            final.extend(sample.word.tolist())
+
+        if success and len(final) == 80:
+            if step > 0:
+                st.info(f"Fenêtres élargies de ±{step:.1f} pour atteindre la solution.")
             random.shuffle(final)
             return final
 
-        # pas assez de candidats dans au moins une catégorie :
-        thr["LO_old"] += STEP
-        thr["HI_old"] -= STEP
-        thr["LO_pld"] += STEP
-        thr["HI_pld"] -= STEP
-        # borne « au cas où »
-        if thr["LO_old"] >= MAX_STEP or thr["LO_pld"] >= MAX_STEP:
-            break
+        step = round(step + 0.1, 2)                  # évite les erreurs d’arrondi
 
-    st.error("Même après assouplissement maximal, impossible de trouver 80 mots.")
+    st.error("Impossible de constituer 80 mots uniques même après un élargissement ± 2.")
     st.stop()
 
 STIMULI = pick_stimuli()
 
-# ───────────────────────────────────────────────
-# 4. PARAMÈTRES VISUELS
-# ───────────────────────────────────────────────
-CYCLE, START, STEP_VIS = 350, 14, 14   # ms
+# ───────────────────────── 4. PROTOCOLE VISUEL STREAMLIT ───────────────────── #
+CYCLE_MS = 350    # durée totale mot + masque
+START_MS = 14     # premier affichage du mot
+STEP_MS  = 14     # pas d’accroissement
 
-# ───────────────────────────────────────────────
-# 5. INTERFACE STREAMLIT
-# ───────────────────────────────────────────────
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
+# ----------------------------- Page d’introduction --------------------------- #
 if st.session_state.page == "intro":
-    st.title("EXPÉRIENCE 3 – sélection adaptative inratable")
-    st.markdown(
-        "Les seuils OLD/PLD sont automatiquement détendus jusqu’à ce qu’il y ait "
-        "toujours 20 mots par catégorie ; puis on tire 80 mots uniques."
-    )
+    st.title("EXPERIENCE 3 – mots masqués (CSV décimal « . »)")
     if st.button("Démarrer l’expérience"):
         st.session_state.page = "exp"
         st.experimental_rerun()
 
-# ───────────────────────────────────────────────
-# 6. PAGE EXPÉRIMENTALE (HTML/JS)
-# ───────────────────────────────────────────────
-elif st.session_state.page == "exp":
+# ---------------------------------- Expérience -------------------------------- #
+else:
     html = f"""
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
 <style>
-body {{user-select:none;margin:0;display:flex;flex-direction:column;
-       align-items:center;justify-content:center;height:100vh}}
-#scr {{font-family:Arial,Helvetica,sans-serif;font-size:64px}}
-#ans {{font-size:32px;margin-top:20px}}
-</style></head><body id="body" tabindex="0">
-
+html,body {{
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Courier New', monospace;
+}}
+#scr {{
+    font-size: 60px;
+    user-select: none;
+}}
+#ans {{
+    display: none;
+    font-size: 48px;
+    width: 60%;
+    text-align: center;
+}}
+</style>
+</head>
+<body tabindex="0">
 <div id="scr"></div>
-<input id="ans" style="display:none" autocomplete="off">
-
+<input id="ans" autocomplete="off"/>
 <script>
-window.onload = () => document.getElementById('body').focus();
+window.addEventListener("load", () => document.body.focus());
 
-const W = {json.dumps(STIMULI)}, C = {CYCLE}, S = {START}, P = {STEP_VIS};
-let i = 0, res = [];
-const scr = document.getElementById('scr'), ans = document.getElementById('ans');
+const WORDS = {json.dumps(STIMULI)};
+const CYCLE = {CYCLE_MS};
+const START = {START_MS};
+const STEP  = {STEP_MS};
 
-function run(){{
-  if(i >= W.length) return fin();
-  const w = W[i], mask = '#'.repeat(w.length);
-  let sd = S, md = C - sd, t0 = performance.now(), on = true, t1, t2;
+let trial = 0;
+let results = [];
+const scr = document.getElementById("scr");
+const ans = document.getElementById("ans");
 
-  (function loop(){{
-    if(!on) return;
-    scr.textContent = w;
-    t1 = setTimeout(()=>{{ if(!on) return;
-      scr.textContent = mask;
-      t2 = setTimeout(()=>{{ if(on){{ sd += P; md = Math.max(0, C - sd); loop(); }} }}, md);
-    }}, sd);
-  }})();
+function nextTrial() {{
 
-  function space(e){{
-    if(e.code !== 'Space' || !on) return;
-    on = false; clearTimeout(t1); clearTimeout(t2);
-    const rt = Math.round(performance.now() - t0);
-    window.removeEventListener('keydown', space);
+    if (trial >= WORDS.length) {{
+        endExperiment();
+        return;
+    }}
 
-    scr.textContent = '';
-    ans.style.display='block'; ans.value=''; ans.focus();
+    const w = WORDS[trial];
+    const mask = "#".repeat(w.length);
 
-    ans.onkeydown = ev => {{
-      if(ev.key !== 'Enter') return;
-      ev.preventDefault();
-      res.push({{word:w, rt_ms:rt, response:ans.value.trim()}});
-      ans.onkeydown = null; ans.style.display='none'; i++; run();
-    }};
-  }}
-  window.addEventListener('keydown', space);
+    let showDur = START;
+    let hideDur = CYCLE - showDur;
+    let tShow, tHide;
+    const t0 = performance.now();
+    let active = true;
+
+    (function loop() {{
+        if (!active) return;
+
+        scr.textContent = w;
+        tShow = setTimeout(() => {{
+            if (!active) return;
+
+            scr.textContent = mask;
+            tHide = setTimeout(() => {{
+                if (active) {{
+                    showDur += STEP;
+                    hideDur = Math.max(0, CYCLE - showDur);
+                    loop();
+                }}
+            }}, hideDur);
+        }}, showDur);
+    }})();
+
+    function onSpace(e) {{
+        if (e.code === "Space" && active) {{
+            active = false;
+            clearTimeout(tShow);
+            clearTimeout(tHide);
+
+            const rt = Math.round(performance.now() - t0);
+            window.removeEventListener("keydown", onSpace);
+
+            scr.textContent = "";
+            ans.style.display = "block";
+            ans.value = "";
+            ans.focus();
+
+            function onEnter(ev) {{
+                if (ev.key === "Enter") {{
+                    ev.preventDefault();
+                    results.push({{
+                        word: w,
+                        rt_ms: rt,
+                        response: ans.value.trim()
+                    }});
+                    ans.removeEventListener("keydown", onEnter);
+                    ans.style.display = "none";
+                    trial += 1;
+                    nextTrial();
+                }}
+            }}
+            ans.addEventListener("keydown", onEnter);
+        }}
+    }}
+    window.addEventListener("keydown", onSpace);
 }}
 
-function fin(){{
-  scr.style.fontSize='40px'; scr.textContent='Merci !';
-  const csv = ['word;rt_ms;response',
-               ...res.map(r=>r.word+';'+r.rt_ms+';'+r.response)].join('\\n');
-  const a = Object.assign(document.createElement('a'), {{
-    href:URL.createObjectURL(new Blob([csv], {{type:'text/csv'}})),
-    download:'results.csv',
-    textContent:'Télécharger les résultats',
-    style:'font-size:32px;margin-top:30px'
-  }});
-  document.body.appendChild(a);
+function endExperiment() {{
+    scr.style.fontSize = "40px";
+    scr.textContent = "Merci !";
+
+    const csv = [
+        "word;rt_ms;response",
+        ...results.map(r => `${{r.word}};${{r.rt_ms}};${{r.response}}`)
+    ].join("\\n");
+
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], {{type: "text/csv"}}));
+    a.download = "results.csv";
+    a.textContent = "Télécharger les résultats";
+    a.style.fontSize = "32px";
+    a.style.marginTop = "30px";
+    document.body.appendChild(a);
 }}
 
-run();
-</script></body></html>
+nextTrial();
+</script>
+</body>
+</html>
 """
-    components.html(html, height=650, scrolling=False)
+    components.v1.html(html, height=650, scrolling=False)
