@@ -1,4 +1,3 @@
-@@ -1,201 +1,136 @@
 # -*- coding: utf-8 -*-
 """
 EXPERIMENT 3 – 80 mots (uniques) issus de Lexique 3.83
