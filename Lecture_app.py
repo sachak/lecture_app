@@ -1,37 +1,29 @@
 # -*- coding: utf-8 -*-
 # =============================================================
-#  Lecture_app.py   —   Expérience Streamlit
-# =============================================================
-# Intro  ➜  3 essais d’entraînement  ➜  80 mots réels
-# Les 80 mots sont tirés en arrière-plan pendant l’intro + entraînement.
+#  Lecture_app.py  –  version auto-refresh
 # =============================================================
 import json, random, threading, time, pandas as pd, numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
-from get_stimuli import get_stimuli      # ← ton module de tirage
+from get_stimuli import get_stimuli          # ← ton module de tirage
 
-# ------------ 0. CONFIG VISUEL --------------------------------
+# ---------- CONFIG VISUEL ------------------------------------
 st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown(
-    "<style>#MainMenu,header,footer{visibility:hidden}</style>",
-    unsafe_allow_html=True
-)
+st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
+            unsafe_allow_html=True)
 
-# ------------ 1. PETIT LEXIQUE (juste pour choisir 3 mots d’essai) -----
-CSV_FILE = "Lexique383.csv"           # doit être présent
-
+# ---------- LEXIQUE : juste pour 3 mots d’essai --------------
+CSV_FILE = "Lexique383.csv"
 @st.cache_data(show_spinner="Chargement du lexique…")
-def load_lexique():
+def load_lex():
     df = pd.read_csv(CSV_FILE, sep=";", decimal=".", encoding="utf-8",
                      dtype=str, engine="python", on_bad_lines="skip")
-    df = df.rename(columns=lambda c: c.lower())
-    df = df.rename(columns={"ortho": "word"})
+    df = df.rename(columns=lambda c: c.lower()).rename(columns={"ortho": "word"})
     df.word = df.word.str.upper()
     return df[["word"]].dropna()
+LEX = load_lex()
 
-LEX = load_lexique()
-
-# ------------ 2. TIRAGE DES 80 MOTS EN TÂCHE DE FOND -------------------
+# ---------- DÉMARRER la sélection des 80 mots ----------------
 def _launch_selection():
     try:
         st.session_state["stimuli"] = get_stimuli()
@@ -39,29 +31,32 @@ def _launch_selection():
     except Exception as e:
         st.session_state["stimuli_error"] = str(e)
         st.session_state["stimuli_ready"] = False
+    # forcer un nouveau run dès que le travail est terminé
+    try:
+        st.experimental_rerun()
+    except st.runtime.scriptrunner.StopException:
+        pass   # Streamlit déclenche toujours cette exception lors d’un rerun
 
 if "stimuli_ready" not in st.session_state:
-    st.session_state["stimuli_ready"] = False
-    st.session_state["stimuli_error"] = None
+    st.session_state.update({"stimuli_ready": False,
+                             "stimuli_error": None})
     threading.Thread(target=_launch_selection, daemon=True).start()
 
-# ------------ 3. MOTS D’ENTRAÎNEMENT (3 mots de 3 lettres) ------------
-TRAIN_WORDS = random.sample(
-    [w for w in LEX.word if len(w) == 3], k=3)
+# ---------- 3 mots d’entraînement ----------------------------
+TRAIN_WORDS = random.sample([w for w in LEX.word if len(w) == 3], k=3)
 
-# ------------ 4. ÉTAT DE SESSION --------------------------------------
+# ---------- Navigation (session_state) -----------------------
 if "page" not in st.session_state:
-    st.session_state.page  = "intro"
-    st.session_state.index = 0            # pour l’entraînement
+    st.session_state.page = "intro"
+    st.session_state.train_idx = 0   # indice d’essai
 
-# ======================================================================
-#  PAGE 1 : INTRO
-# ======================================================================
+# =================================================================
+#  PAGE INTRO
+# =================================================================
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 — instructions")
     st.markdown("""
-    Vous allez voir : dièses « ###### » puis des mots.  
-    Appuyez sur [Espace] dès que le mot apparaît, puis retapez-le et
+    Appuyez sur [Espace] dès que le mot apparaît, retapez-le, puis
     validez avec [Entrée].  
     Nous commençons par **3 essais d’entraînement**.
     """)
@@ -69,43 +64,47 @@ if st.session_state.page == "intro":
         st.session_state.page = "train"
         st.experimental_rerun()
 
-# ======================================================================
-#  PAGE 2 : ENTRAÎNEMENT (3 essais)
-# ======================================================================
+# =================================================================
+#  PAGE ENTRAÎNEMENT
+# =================================================================
 elif st.session_state.page == "train":
-    i = st.session_state.index
-    if i >= len(TRAIN_WORDS):                       # terminé
+    i = st.session_state.train_idx
+    if i >= len(TRAIN_WORDS):                    # entraînement terminé
         st.session_state.page = "wait_real"
         st.experimental_rerun()
     else:
-        st.subheader(f"Essai d’entraînement {i+1} / {len(TRAIN_WORDS)}")
+        st.subheader(f"Essai d’entraînement {i+1}/{len(TRAIN_WORDS)}")
         st.write("Mot cible :", TRAIN_WORDS[i])
         if st.button("Valider (fictif)"):
-            st.session_state.index += 1
+            st.session_state.train_idx += 1
             st.experimental_rerun()
 
-# ======================================================================
-#  PAGE 2 bis : ATTENTE SI LES 80 MOTS NE SONT PAS PRÊTS
-# ======================================================================
+# =================================================================
+#  PAGE TAMPO "wait_real"
+# =================================================================
 elif st.session_state.page == "wait_real":
-    if st.session_state.get("stimuli_ready"):
+    if st.session_state.get("stimuli_ready"):            # OK ➜ expérience
         st.session_state.page = "exp"
         st.experimental_rerun()
-    elif st.session_state.get("stimuli_error"):
+
+    elif st.session_state.get("stimuli_error"):          # erreur bloquante
         st.error("Erreur pendant la génération des stimuli :\n\n"
                  + st.session_state["stimuli_error"])
-    else:
-        st.info("Préparation des 80 mots… merci de patienter.")
-        st.progress(None)
 
-# ======================================================================
-#  PAGE 3 : EXPÉRIENCE RÉELLE (80 mots)
-# ======================================================================
+    else:                                                # toujours en cours
+        st.info("Préparation des 80 mots … merci de patienter.")
+        st.progress(None)
+        time.sleep(2)            # auto-refresh toutes les 2 s
+        st.experimental_rerun()
+
+# =================================================================
+#  PAGE EXPÉRIENCE (80 mots)
+# =================================================================
 elif st.session_state.page == "exp":
-    STIMULI = st.session_state["stimuli"]   # liste de 80 mots (str)
-    # ----------- paramètres d’affichage -------------
-    CYCLE, START, STEP = 350, 14, 14        # mêmes valeurs que ton code JS
-    # ----------- bloc HTML/JS (accolades doublées) --
+    STIMULI = st.session_state["stimuli"]    # liste finale
+    # paramètres d’affichage
+    CYCLE, START, STEP = 350, 14, 14
+    # f-string : toutes les accolades JS sont doublées {{   }}
     html = f"""
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
