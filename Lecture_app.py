@@ -102,9 +102,9 @@ MASKS = {
 }
 
 BASE_WIN = {
-    "freq": (0.44, 2.94),   # Log-freq (freqlemfilms2)
-    "let":  (8.5,  9.5),    # Nombre de lettres
-    "pho":  (6.5,  7.5),    # Nombre de phonèmes
+    "freq": (0.44, 9.94),   # Log-freq (freqlemfilms2)
+    "let":  (0.5,  9.5),    # Nombre de lettres
+    "pho":  (0.5,  9.5),    # Nombre de phonèmes
 }
 
 def enlarge(win: dict[str, tuple[float, float]], step: float
