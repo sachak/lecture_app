@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 # =============================================================
-#  Lecture_app.py  –  version auto-refresh
+#  Lecture_app.py  –  version auto-refresh + accolades échappées
 # =============================================================
 import json, random, threading, time, pandas as pd, numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
-from get_stimuli import get_stimuli          # ← ton module de tirage
+from get_stimuli import get_stimuli          # ← module qui calcule les 80 mots
 
-# ---------- CONFIG VISUEL ------------------------------------
+# ---------- CONFIGURATION VISUELLE ----------------------------
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
             unsafe_allow_html=True)
 
-# ---------- LEXIQUE : juste pour 3 mots d’essai --------------
+# ---------- PETIT LEXIQUE (3 mots d’entraînement) -------------
 CSV_FILE = "Lexique383.csv"
 @st.cache_data(show_spinner="Chargement du lexique…")
 def load_lex():
@@ -23,7 +23,7 @@ def load_lex():
     return df[["word"]].dropna()
 LEX = load_lex()
 
-# ---------- DÉMARRER la sélection des 80 mots ----------------
+# ---------- LANCER la sélection des 80 mots en TÂCHE DE FOND --
 def _launch_selection():
     try:
         st.session_state["stimuli"] = get_stimuli()
@@ -31,24 +31,24 @@ def _launch_selection():
     except Exception as e:
         st.session_state["stimuli_error"] = str(e)
         st.session_state["stimuli_ready"] = False
-    # forcer un nouveau run dès que le travail est terminé
+    # forcer un nouveau run dès que la génération se termine
     try:
         st.experimental_rerun()
     except st.runtime.scriptrunner.StopException:
-        pass   # Streamlit déclenche toujours cette exception lors d’un rerun
+        pass
 
 if "stimuli_ready" not in st.session_state:
     st.session_state.update({"stimuli_ready": False,
                              "stimuli_error": None})
     threading.Thread(target=_launch_selection, daemon=True).start()
 
-# ---------- 3 mots d’entraînement ----------------------------
+# ---------- 3 mots d’entraînement -----------------------------
 TRAIN_WORDS = random.sample([w for w in LEX.word if len(w) == 3], k=3)
 
-# ---------- Navigation (session_state) -----------------------
+# ---------- NAVIGATION ----------------------------------------
 if "page" not in st.session_state:
     st.session_state.page = "intro"
-    st.session_state.train_idx = 0   # indice d’essai
+    st.session_state.train_idx = 0
 
 # =================================================================
 #  PAGE INTRO
@@ -56,8 +56,8 @@ if "page" not in st.session_state:
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 — instructions")
     st.markdown("""
-    Appuyez sur [Espace] dès que le mot apparaît, retapez-le, puis
-    validez avec [Entrée].  
+    Appuyez sur **Espace** dès que le mot apparaît, retapez-le puis validez
+    avec **Entrée**.  
     Nous commençons par **3 essais d’entraînement**.
     """)
     if st.button("Je suis prêt·e"):
@@ -69,7 +69,7 @@ if st.session_state.page == "intro":
 # =================================================================
 elif st.session_state.page == "train":
     i = st.session_state.train_idx
-    if i >= len(TRAIN_WORDS):                    # entraînement terminé
+    if i >= len(TRAIN_WORDS):
         st.session_state.page = "wait_real"
         st.experimental_rerun()
     else:
@@ -80,38 +80,35 @@ elif st.session_state.page == "train":
             st.experimental_rerun()
 
 # =================================================================
-#  PAGE TAMPO "wait_real"
+#  PAGE TAMPO « wait_real »
 # =================================================================
 elif st.session_state.page == "wait_real":
-    if st.session_state.get("stimuli_ready"):            # OK ➜ expérience
+    if st.session_state.get("stimuli_ready"):
         st.session_state.page = "exp"
         st.experimental_rerun()
-
-    elif st.session_state.get("stimuli_error"):          # erreur bloquante
+    elif st.session_state.get("stimuli_error"):
         st.error("Erreur pendant la génération des stimuli :\n\n"
                  + st.session_state["stimuli_error"])
-
-    else:                                                # toujours en cours
-        st.info("Préparation des 80 mots … merci de patienter.")
+    else:
+        st.info("Préparation des 80 mots… merci de patienter.")
         st.progress(None)
-        time.sleep(2)            # auto-refresh toutes les 2 s
+        time.sleep(2)
         st.experimental_rerun()
 
 # =================================================================
 #  PAGE EXPÉRIENCE (80 mots)
 # =================================================================
 elif st.session_state.page == "exp":
-    STIMULI = st.session_state["stimuli"]    # liste finale
-    # paramètres d’affichage
-    CYCLE, START, STEP = 350, 14, 14
-    # f-string : toutes les accolades JS sont doublées {{   }}
+    STIMULI = st.session_state["stimuli"]          # liste des 80 mots
+    CYCLE, START, STEP = 350, 14, 14               # paramètres JS
+
     html = f"""
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
-html,body{{height:100%;margin:0;display:flex;align-items:center;justify-content:center;
-font-family:'Courier New',monospace}}
-#scr{{font-size:60px;user-select:none}}
-#ans{{display:none;font-size:48px;width:60%;text-align:center}}
+html,body{{{{height:100%;margin:0;display:flex;align-items:center;justify-content:center;
+font-family:'Courier New',monospace}}}}
+#scr{{{{font-size:60px;user-select:none}}}}
+#ans{{{{display:none;font-size:48px;width:60%;text-align:center}}}}
 </style></head>
 <body id="body" tabindex="0">
 <div id="scr"></div><input id="ans" autocomplete="off"/>
@@ -122,38 +119,38 @@ const W={json.dumps(STIMULI)},C={CYCLE},S={START},P={STEP};
 let i=0,res=[];
 const scr=document.getElementById('scr'), ans=document.getElementById('ans');
 
-function run(){{ if(i>=W.length){{fin();return;}}
+function run(){{{{ if(i>=W.length){{{{fin();return;}}}}  
   const w=W[i],m='#'.repeat(w.length);
   let sd=S,md=C-sd,t0=performance.now(),on=true,t1,t2;
-  (function loop(){{ if(!on)return;
+  (function loop(){{{{ if(!on)return;
     scr.textContent=w;
-    t1=setTimeout(()=>{{ if(!on)return;
+    t1=setTimeout(()=>{{{{ if(!on)return;
        scr.textContent=m;
-       t2=setTimeout(()=>{{ if(on){{ sd+=P;md=Math.max(0,C-sd);loop(); }} }},md);
-    }},sd);
-  }})();
-  window.addEventListener('keydown',function sp(e){{ if(e.code==='Space'&&on){{ 
+       t2=setTimeout(()=>{{{{ if(on){{{{ sd+=P;md=Math.max(0,C-sd);loop(); }}}} }}}},md);
+    }}}},sd);
+  }}}})();
+  window.addEventListener('keydown',function sp(e){{{{ if(e.code==='Space'&&on){{{{ 
         on=false;clearTimeout(t1);clearTimeout(t2);
         const rt=Math.round(performance.now()-t0);
         window.removeEventListener('keydown',sp);
         scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
-        ans.addEventListener('keydown',function ent(ev){{ if(ev.key==='Enter'){{ 
+        ans.addEventListener('keydown',function ent(ev){{{{ if(ev.key==='Enter'){{{{ 
            ev.preventDefault();
-           res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
+           res.push({{{{word:w,rt_ms:rt,response:ans.value.trim()}}}});
            ans.removeEventListener('keydown',ent);
            ans.style.display='none';i++;run();
-        }}}); }} }});
-}}
+        }}}} }}}}); }}}} }}}});
+}}}}
 
-function fin(){{ scr.style.fontSize='40px';scr.textContent='Merci !';
+function fin(){{{{ scr.style.fontSize='40px';scr.textContent='Merci !';
   const csv=['word;rt_ms;response',...res.map(r=>r.word+';'+r.rt_ms+';'+r.response)].join('\\n');
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv'}}));
+  a.href=URL.createObjectURL(new Blob([csv],{{{{type:'text/csv'}}}}));
   a.download='results.csv';
   a.textContent='Télécharger les résultats';
   a.style.fontSize='32px';a.style.marginTop='30px';
   document.body.appendChild(a);
-}}
+}}}}
 run();
 </script></body></html>"""
     components.html(html, height=650, scrolling=False)
