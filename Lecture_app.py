@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 : sélection adaptative de 80 mots (4 × 20)
-CSV UTF-8, séparateur « ; », décimales « . ».
+EXPÉRIENCE 3 : sélection adaptative de 80 mots (4 × 20).
 
-Le programme :
-1. charge le lexique (Lexique383.csv) placé à côté du script ;
-2. sélectionne 4 × 20 mots répondant à des contraintes OLD20 / PLD20
-   tout en équilibrant les médianes de fréquence, taille orthographique
-   et nombre de phonèmes ; les fenêtres sont élargies automatiquement
-   jusqu’à trouver une solution ;
-3. lance le protocole visuel (mot masqué progressivement) entièrement
-   en HTML / Javascript inséré dans Streamlit ;
-4. exporte les résultats au format CSV (séparateur « ; », décimales « . »).
+Format du résultat : CSV UTF-8, séparateur « ; », décimales « . ».
 
-Auteur : ——————————————————————————
+Étapes :
+1. Chargement du Lexique 383 (fichier « Lexique383.csv » placé dans le même
+   dossier que ce script).
+2. Sélection adaptative de 4 × 20 mots répondant à des contraintes OLD20/PLD20
+   et équilibrés sur la fréquence, la longueur orthographique et le nombre
+   de phonèmes ; les fenêtres sont élargies jusqu’à trouver une solution.
+3. Protocole visuel (mot masqué progressivement) exécuté en HTML/Javascript
+   dans Streamlit.
+4. Export CSV des réponses.
+
+Lancer :  streamlit run exp3.py
 """
 
 from __future__ import annotations
@@ -33,18 +34,18 @@ st.markdown(
     """
     <style>
         #MainMenu, header, footer {visibility: hidden;}
-        .css-1d391kg {display: none;}   /* ancien sélecteur Streamlit */
+        .css-1d391kg {display: none;}  /* ancien sélecteur Streamlit */
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ─────────────────────────── 1. CHARGEMENT LEXIQUE ─────────────────────────── #
+# ─────────────────────────── 1. CHARGEMENT DU LEXIQUE ──────────────────────── #
 CSV_FILE = Path(__file__).with_name("Lexique383.csv")
 
 @st.cache_data(show_spinner="Chargement du lexique…")
 def load_lexique() -> pd.DataFrame:
-    """Charge le fichier Lexique383.csv, renomme et typage des colonnes utiles."""
+    """Charge le fichier Lexique383.csv et met en forme les colonnes utiles."""
     if not CSV_FILE.exists():
         st.error(f"Fichier « {CSV_FILE.name} » introuvable.")
         st.stop()
@@ -55,33 +56,33 @@ def load_lexique() -> pd.DataFrame:
         decimal=".",
         dtype=str,
         encoding="utf-8",
-        on_bad_lines="skip",
         engine="python",
+        on_bad_lines="skip",
     )
 
     # Harmonisation des noms de colonnes
-    ren = {}
+    rename = {}
     for col in df.columns:
         lc = col.lower()
         if any(k in lc for k in ("étiquettes", "ortho", "word")):
-            ren[col] = "word"
+            rename[col] = "word"
         elif "old20" in lc:
-            ren[col] = "old20"
+            rename[col] = "old20"
         elif "pld20" in lc:
-            ren[col] = "pld20"
+            rename[col] = "pld20"
         elif "freqlemfilms2" in lc:
-            ren[col] = "freq"
+            rename[col] = "freq"
         elif "nblettres" in lc:
-            ren[col] = "let"
+            rename[col] = "let"
         elif "nbphons" in lc:
-            ren[col] = "pho"
+            rename[col] = "pho"
 
-    df = df.rename(columns=ren)
+    df = df.rename(columns=rename)
 
     required = {"word", "old20", "pld20", "freq", "let", "pho"}
     if not required.issubset(df.columns):
-        missing = ", ".join(sorted(required - set(df.columns)))
-        st.error(f"Colonnes manquantes dans le lexique : {missing}")
+        st.error("Colonnes manquantes dans le lexique : "
+                 + ", ".join(sorted(required - set(df.columns))))
         st.stop()
 
     df["word"] = df["word"].str.upper()
@@ -92,7 +93,7 @@ def load_lexique() -> pd.DataFrame:
 
 LEX: pd.DataFrame = load_lexique()
 
-# ─────────────────────── 2. MASQUES & FENÊTRES INITIALES ───────────────────── #
+# ─────────────────────── 2. MASQUES ET FENÊTRES INITIALES ──────────────────── #
 MASKS = {
     "LOW_OLD" :  LEX.old20 < 1.11,
     "HIGH_OLD":  LEX.old20 > 3.79,
@@ -101,37 +102,41 @@ MASKS = {
 }
 
 BASE_WIN = {
-    "freq": (0.44, 2.94),
-    "let":  (8.5,  9.5),
-    "pho":  (6.5,  7.5),
+    "freq": (0.44, 2.94),   # Log-freq (freqlemfilms2)
+    "let":  (8.5,  9.5),    # Nombre de lettres
+    "pho":  (6.5,  7.5),    # Nombre de phonèmes
 }
 
-def enlarge(win: dict[str, tuple[float, float]], step: float) -> dict[str, tuple[float, float]]:
-    """Élargit toutes les fenêtres numériques d’une valeur ± step."""
+def enlarge(win: dict[str, tuple[float, float]], step: float
+            ) -> dict[str, tuple[float, float]]:
+    """Élargit chaque intervalle numérique d’une valeur ± step."""
     return {k: (v[0] - step, v[1] + step) for k, v in win.items()}
 
-# ────────────────────── 3. SÉLECTION ADAPTATIVE DES MOTS ───────────────────── #
+# ─────────────────────── 3. SÉLECTION ADAPTATIVE DES MOTS ──────────────────── #
 @st.cache_data(show_spinner="Sélection des 80 mots…")
 def pick_stimuli() -> list[str]:
-    """Renvoie une liste aléatoire de 80 mots (4 × 20) répondant aux contraintes."""
+    """Retourne une liste aléatoire de 80 mots (4×20) satisfaisant les contraintes."""
     rng = np.random.default_rng()
 
     step = 0.0
-    while step <= 2.0:                               # élargissement maximum ± 2
+    while step <= 2.0:                                      # élargissement max ± 2
         win = enlarge(BASE_WIN, step)
-        chosen: set[str] = set()
+        chosen: set[str] = set()          # mots déjà tirés (unicité globale)
         final: list[str] = []
         success = True
 
+        # Boucle sur les 4 conditions OLD/PLD
         for cond_name, cond_mask in MASKS.items():
             pool = LEX.loc[cond_mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
 
-            if len(pool) < 20:                       # impossible avec cette fenêtre
+            if len(pool) < 20:                              # impossible à ce pas
                 success = False
                 break
 
-            # 10 000 listes de 20 indices
-            idx_samples = rng.choice(len(pool), size=(10_000, 20), replace=False)
+            # 10 000 tirages indépendants de 20 indices sans remise
+            idx_samples = np.array(
+                [rng.choice(len(pool), size=20, replace=False) for _ in range(10_000)]
+            )
 
             med_freq = np.median(pool.freq.values[idx_samples], axis=1)
             med_let  = np.median(pool.let .values[idx_samples], axis=1)
@@ -143,19 +148,20 @@ def pick_stimuli() -> list[str]:
                 (win["pho" ][0] <= med_pho ) & (med_pho  <= win["pho" ][1])
             )
 
-            if ok.any():                             # échantillon parfait
+            if ok.any():                                      # échantillon parfait
                 best = int(np.flatnonzero(ok)[0])
-            else:                                    # meilleur compromis
+            else:                                             # meilleur compromis
                 penalty = (
                     np.clip(win["freq"][0] - med_freq, 0, None) +
-                    np.clip(med_freq - win["freq"][1], 0, None) +
-                    np.clip(win["let" ][0] - med_let, 0, None) +
-                    np.clip(med_let  - win["let" ][1], 0, None) +
+                    np.clip(med_freq         - win["freq"][1], 0, None) +
+                    np.clip(win["let" ][0] - med_let,  0, None) +
+                    np.clip(med_let          - win["let" ][1], 0, None) +
                     np.clip(win["pho" ][0] - med_pho, 0, None) +
-                    np.clip(med_pho  - win["pho" ][1], 0, None)
+                    np.clip(med_pho          - win["pho" ][1], 0, None)
                 )
                 best = int(penalty.argmin())
-                st.warning(f"{cond_name} : médianes approchées (pénalité {penalty[best]:.2f}).")
+                st.warning(f"{cond_name} : médianes approchées "
+                           f"(pénalité {penalty[best]:.2f}).")
 
             sample = pool.iloc[idx_samples[best]]
             chosen.update(sample.word)
@@ -167,35 +173,34 @@ def pick_stimuli() -> list[str]:
             random.shuffle(final)
             return final
 
-        step = round(step + 0.1, 2)                  # évite les erreurs d’arrondi
+        step = round(step + 0.1, 2)                          # évite les flottants
 
-    st.error("Impossible de constituer 80 mots uniques même après un élargissement ± 2.")
+    st.error("Impossible de constituer 80 mots uniques même après élargissement ± 2.")
     st.stop()
 
-STIMULI = pick_stimuli()
+STIMULI: list[str] = pick_stimuli()
 
-# ───────────────────────── 4. PROTOCOLE VISUEL STREAMLIT ───────────────────── #
-CYCLE_MS = 350    # durée totale mot + masque
-START_MS = 14     # premier affichage du mot
-STEP_MS  = 14     # pas d’accroissement
+# ─────────────────────── 4. PROTOCOLE VISUEL (STREAMLIT) ───────────────────── #
+CYCLE_MS = 350   # durée totale mot + masque
+START_MS = 14    # premier affichage du mot (ms)
+STEP_MS  = 14    # incrément (ms)
 
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-# ----------------------------- Page d’introduction --------------------------- #
+# ----------------------------- page d'introduction --------------------------- #
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués (CSV décimal « . »)")
     if st.button("Démarrer l’expérience"):
         st.session_state.page = "exp"
         st.experimental_rerun()
 
-# ---------------------------------- Expérience -------------------------------- #
+# --------------------------------- expérience -------------------------------- #
 else:
     html = f"""
 <!DOCTYPE html>
 <html lang="fr">
-<head>
-<meta charset="utf-8"/>
+<head><meta charset="utf-8"/>
 <style>
 html,body {{
     height: 100%;
@@ -244,6 +249,7 @@ function nextTrial() {{
     const w = WORDS[trial];
     const mask = "#".repeat(w.length);
 
+    // Durées mot / masque variables
     let showDur = START;
     let hideDur = CYCLE - showDur;
     let tShow, tHide;
