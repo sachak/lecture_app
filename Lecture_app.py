@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – Sélection adaptative de 80 mots (4 × 20)
+EXPÉRIENCE 3 – sélection adaptative (version rapide)
 Lexique : CSV UTF-8, séparateur « ; », décimales « . ».
 """
 
@@ -32,7 +32,7 @@ def load_lexique() -> pd.DataFrame:
         dtype=str, engine="python", on_bad_lines="skip"
     )
 
-    # Harmonise les noms de colonnes
+    # harmonisation des noms de colonnes
     ren = {}
     for col in df.columns:
         low = col.lower()
@@ -50,12 +50,12 @@ def load_lexique() -> pd.DataFrame:
             ren[col] = "pho"
     df = df.rename(columns=ren)
 
-    expected = {"word", "old20", "pld20", "freq", "let", "pho"}
-    if missing := expected - set(df.columns):
-        raise ValueError(f"Colonnes manquantes : {', '.join(missing)}")
+    need = {"word", "old20", "pld20", "freq", "let", "pho"}
+    if miss := need - set(df.columns):
+        raise ValueError(f"Colonnes manquantes : {', '.join(miss)}")
 
     df.word = df.word.str.upper()
-    for c in expected - {"word"}:
+    for c in need - {"word"}:
         df[c] = df[c].astype(float)
 
     return df.dropna()
@@ -72,99 +72,111 @@ MASKS = {
     "HIGH_PLD":  LEX.pld20 > 3.20,
 }
 
-BASE_WIN = dict(freq=(0.44, 2.94),
-                let =(8.5 , 9.5 ),
-                pho =(6.5 , 7.5 ))
-
-def enlarge(win: dict, step: float) -> dict:
-    """Élargit chaque intervalle de ±step."""
-    return {k: (v[0]-step, v[1]+step) for k, v in win.items()}
+# ────────────────────────────────────────────────
+# 3. PARAMÈTRES « ASSOUPLIS » DE SÉLECTION
+# ────────────────────────────────────────────────
+INIT_WIN      = dict(freq=(0.0, 3.5),   # fenêtres de départ déjà larges
+                     let =(4.0,12.0),
+                     pho =(4.0,10.0))
+STEP_ENLARGE  = 0.30                    # pas d’élargissement ±0.30
+MAX_ENLARGES  = 7                       # donc élargissement total possible ±2.1
+TRY_PER_MASK  = 20                      # essais « one-shot » avant recours exhaustif
+N_EXHAUSTIVE  = 2_000                   # échantillons aléatoires détaillés
 
 # ────────────────────────────────────────────────
-# 3. SÉLECTION ADAPTATIVE DES 80 MOTS
+# 4. SÉLECTION ADAPTATIVE (rapide)
 # ────────────────────────────────────────────────
 @st.cache_data(show_spinner="Sélection des 80 mots…")
 def pick_stimuli() -> list[str]:
     rng = np.random.default_rng()
+    win = INIT_WIN.copy()
 
-    step = 0.0
-    while step <= 5.0:                       # élargissement max ±2
-        win = enlarge(BASE_WIN, step)
+    for enlarge_round in range(0, MAX_ENLARGES + 1):
         chosen: set[str] = set()
-        final:  list[str] = []
-        success = True
+        final : list[str] = []
+        ok_all = True
 
         for name, mask in MASKS.items():
             pool = LEX.loc[mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
 
-            # au moins 20 candidats ?
-            if len(pool) < 20:
-                success = False
+            if len(pool) < 20:          # trop peu de candidats : élargir
+                ok_all = False
                 break
 
-            # 10 000 échantillons de 20 indices (sans remise dans chaque échantillon)
-            idx_samples = np.array(
-                [rng.choice(len(pool), size=20, replace=False) for _ in range(10_000)]
-            )
+            # 1) jusqu’à 20 tentatives simples
+            success = False
+            for _ in range(TRY_PER_MASK):
+                idx = rng.choice(len(pool), 20, replace=False)
+                sample = pool.iloc[idx]
+                med   = sample.median(numeric_only=True)
 
-            med_freq = np.median(pool.freq.values[idx_samples], axis=1)
-            med_let  = np.median(pool.let .values[idx_samples], axis=1)
-            med_pho  = np.median(pool.pho .values[idx_samples], axis=1)
+                if (win["freq"][0] <= med.freq <= win["freq"][1] and
+                    win["let" ][0] <= med.let  <= win["let" ][1] and
+                    win["pho" ][0] <= med.pho  <= win["pho" ][1]):
+                    success = True
+                    break
 
-            ok = ((win["freq"][0] <= med_freq) & (med_freq <= win["freq"][1]) &
-                  (win["let" ][0] <= med_let ) & (med_let  <= win["let" ][1]) &
-                  (win["pho" ][0] <= med_pho ) & (med_pho  <= win["pho" ][1]))
+            # 2) sinon, 2 000 tirages → meilleur compromis
+            if not success:
+                idx_samples = np.array(
+                    [rng.choice(len(pool), 20, replace=False) for _ in range(N_EXHAUSTIVE)]
+                )
+                meds = np.stack([
+                    np.median(pool.freq.values[idx_samples], axis=1),
+                    np.median(pool.let .values[idx_samples], axis=1),
+                    np.median(pool.pho .values[idx_samples], axis=1)
+                ], axis=1)
 
-            if ok.any():                           # parfait
-                best_idx = np.flatnonzero(ok)[0]
-            else:                                  # meilleur compromis
-                penalty = (np.clip(win["freq"][0]-med_freq,0,None) +
-                           np.clip(med_freq-win["freq"][1],0,None) +
-                           np.clip(win["let"][0]-med_let ,0,None) +
-                           np.clip(med_let -win["let"][1],0,None) +
-                           np.clip(win["pho"][0]-med_pho ,0,None) +
-                           np.clip(med_pho -win["pho"][1],0,None))
-                best_idx = penalty.argmin()
-                st.warning(f"{name} : médianes approchées (pénalité {penalty[best_idx]:.2f}).")
+                penalty = (
+                    np.clip(win["freq"][0] - meds[:,0], 0, None) +
+                    np.clip(meds[:,0] - win["freq"][1], 0, None) +
+                    np.clip(win["let" ][0] - meds[:,1], 0, None) +
+                    np.clip(meds[:,1] - win["let" ][1], 0, None) +
+                    np.clip(win["pho" ][0] - meds[:,2], 0, None) +
+                    np.clip(meds[:,2] - win["pho" ][1], 0, None)
+                )
+                idx = idx_samples[penalty.argmin()]
+                sample = pool.iloc[idx]
 
-            sample = pool.iloc[idx_samples[best_idx]]
+            # ajoute les 20 mots trouvés
             final.extend(sample.word.tolist())
             chosen.update(sample.word)
 
-        if success and len(final) == 80:
-            if step > 0:
-                st.info(f"Fenêtres élargies de ±{step:.1f} pour satisfaire toutes les contraintes.")
+        if ok_all and len(final) == 80:
+            if enlarge_round:
+                st.info(f"Fenêtres élargies de ±{enlarge_round*STEP_ENLARGE:.1f}.")
             random.shuffle(final)
             return final
 
-        step += 0.1                            # élargit et recommence
+        # élargit toutes les bornes
+        win = {k: (v[0]-STEP_ENLARGE, v[1]+STEP_ENLARGE) for k, v in win.items()}
 
-    st.error("Impossible de constituer 80 mots même avec un élargissement ±2.")
+    st.error("Impossible de constituer 80 mots même après élargissement maximal.")
     st.stop()
 
 STIMULI = pick_stimuli()
 
 # ────────────────────────────────────────────────
-# 4. PARAMÈTRES VISUELS
+# 5. PARAMÈTRES VISUELS
 # ────────────────────────────────────────────────
-CYCLE = 350      # durée mot + masque (ms)
-START = 14       # 1ʳᵉ exposition (ms)
+CYCLE = 350      # durée mot+masque (ms)
+START = 14       # première présentation (ms)
 STEP  = 14       # incrément (ms)
 
 # ────────────────────────────────────────────────
-# 5. INTERFACE UTILISATEUR
+# 6. INTERFACE UTILISATEUR
 # ────────────────────────────────────────────────
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
 if st.session_state.page == "intro":
-    st.title("EXPÉRIENCE 3 – mots masqués (CSV décimal '.') ")
+    st.title("EXPÉRIENCE 3 – mots masqués (version rapide)")
     if st.button("Démarrer l’expérience"):
         st.session_state.page = "exp"
         st.experimental_rerun()
 
 # ────────────────────────────────────────────────
-# 6. PAGE EXPÉRIMENTALE (HTML / JS)
+# 7. PAGE EXPÉRIMENTALE (HTML + JS)
 # ────────────────────────────────────────────────
 elif st.session_state.page == "exp":
     html = f"""
@@ -188,7 +200,6 @@ body {{ user-select:none; margin:0; display:flex; flex-direction:column;
 // focus automatique
 window.addEventListener('load', () => document.getElementById('body').focus());
 
-// paramètres depuis Python
 const W = {json.dumps(STIMULI)};
 const C = {CYCLE};
 const S = {START};
