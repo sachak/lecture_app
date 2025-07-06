@@ -88,7 +88,7 @@ def pick_stimuli() -> list[str]:
     rng = np.random.default_rng()
 
     step = 0.0
-    while step <= 2.0:                       # élargissement max ±2
+    while step <= 5.0:                       # élargissement max ±2
         win = enlarge(BASE_WIN, step)
         chosen: set[str] = set()
         final:  list[str] = []
