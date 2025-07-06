@@ -173,7 +173,7 @@ def pick_stimuli() -> list[str]:
             random.shuffle(final)
             return final
 
-        step = round(step + 0.1, 2)                          # évite les flottants
+        step = round(step + 0.1, 9)                          # évite les flottants
 
     st.error("Impossible de constituer 80 mots uniques même après élargissement ± 2.")
     st.stop()
