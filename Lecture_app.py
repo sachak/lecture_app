@@ -95,16 +95,16 @@ LEX: pd.DataFrame = load_lexique()
 
 # ─────────────────────── 2. MASQUES ET FENÊTRES INITIALES ──────────────────── #
 MASKS = {
-    "LOW_OLD" :  LEX.old20 < 1.11,
-    "HIGH_OLD":  LEX.old20 > 3.79,
-    "LOW_PLD" :  LEX.pld20 < 0.70,
-    "HIGH_PLD":  LEX.pld20 > 3.20,
+    "LOW_OLD" :  LEX.old20 < 10.11,
+    "HIGH_OLD":  LEX.old20 > 0.79,
+    "LOW_PLD" :  LEX.pld20 < 10.70,
+    "HIGH_PLD":  LEX.pld20 > 0.20,
 }
 
 BASE_WIN = {
-    "freq": (0.44, 9.94),   # Log-freq (freqlemfilms2)
-    "let":  (0.5,  9.5),    # Nombre de lettres
-    "pho":  (0.5,  9.5),    # Nombre de phonèmes
+    "freq": (0.44, 59.94),   # Log-freq (freqlemfilms2)
+    "let":  (0.5,  59.5),    # Nombre de lettres
+    "pho":  (0.5,  59.5),    # Nombre de phonèmes
 }
 
 def enlarge(win: dict[str, tuple[float, float]], step: float
