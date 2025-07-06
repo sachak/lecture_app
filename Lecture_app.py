@@ -1,129 +1,103 @@
-# -*- coding: utf-8 -*-
+# app.py
 # =============================================================
-# Lecture_app_streamlit.py  –  version 100 % Streamlit
+# Évaluation Lecture / Écriture – Module 1
+# Infos générales + premier test vocabulaire + export CSV
 # =============================================================
-import json, random, threading, time, uuid, io
-import pandas as pd
+
 import streamlit as st
-from get_stimuli import get_stimuli          # ← ta fonction de tirage
+import pandas as pd
+import uuid        # pour générer un identifiant unique si l’utilisateur n’en saisit pas
 
 # -------------------------------------------------------------
-#  PARAMÈTRES
+#  FONCTION PRINCIPALE
 # -------------------------------------------------------------
-MASK_TIME   = 0.35     # durée d’affichage du masque  (s)
-WORD_TIME   = 0.02     # délai avant de remplacer par le mot (s)
-CYCLE_INC   = 0.014    # augmentation du SOA après chaque essai
-TRAIN_WORDS = ["MER", "SAC", "LOT"]   # 3 essais fixés
+def main():
+    st.set_page_config(
+        page_title="Évaluation Lecture/Écriture – Module 1",
+        page_icon="📝",
+        layout="centered"
+    )
+
+    st.title("📝 Évaluation Lecture / Écriture – Module 1")
+    st.write(
+        "Bienvenue ! Remplissez d’abord vos **informations générales**, "
+        "puis répondez au **Test 1**. "
+        "Vous pourrez ensuite télécharger un **fichier CSV** contenant vos réponses."
+    )
+
+    # ---------- 1. Informations générales ----------
+    st.header("Informations générales")
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        participant_id = st.text_input(
+            "Identifiant participant (facultatif : laissez vide pour qu’il soit généré)"
+        )
+
+    # Génération d’un identifiant aléatoire si champ vide
+    if participant_id.strip() == "":
+        participant_id = str(uuid.uuid4())
+
+    with col2:
+        st.markdown("Identifiant utilisé :")
+        st.code(participant_id, language="")
+
+    age = st.number_input("Âge (en années)", min_value=16, max_value=99, value=25, step=1)
+    sexe = st.radio("Sexe", ["Femme", "Homme", "Autre"], horizontal=True)
+    etude = st.selectbox(
+        "Niveau d’étude",
+        [
+            "Collège",
+            "Lycée",
+            "Baccalauréat",
+            "Bac +2",
+            "Licence / Master",
+            "Doctorat",
+            "Autre",
+        ],
+    )
+
+    st.markdown("---")
+
+    # ---------- 2. Test 1 : Vocabulaire ----------
+    st.header("Test 1 – Vocabulaire (synonyme)")
+    st.write("Choisissez le mot **le plus proche** du sens de : **impétueux**")
+
+    options = ["Calme", "Fougueux", "Timide", "Lent"]
+    reponse_vocab = st.radio("Votre réponse :", options, index=None)
+
+    st.markdown("---")
+
+    # ---------- 3. Construction du CSV ----------
+    data = {
+        "participant_id": [participant_id],
+        "age": [age],
+        "sexe": [sexe],
+        "etude": [etude],
+        "test1_item": ["impétueux"],
+        "test1_reponse": [reponse_vocab],
+    }
+    df = pd.DataFrame(data)
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+    # ---------- 4. Téléchargement ----------
+    st.header("Téléchargement")
+
+    st.download_button(
+        label="📥 Télécharger mes réponses (CSV)",
+        data=csv_bytes,
+        file_name=f"{participant_id}_module1.csv",
+        mime="text/csv",
+        disabled=reponse_vocab is None,  # activation seulement après réponse
+    )
+
+    st.info(
+        "Après téléchargement, vous pourrez fermer la page ou passer au module suivant."
+    )
+
 
 # -------------------------------------------------------------
-#  SÉLECTION DES 80 MOTS EN TÂCHE DE FOND
+#  POINT D’ENTRÉE
 # -------------------------------------------------------------
-def launch_selection():
-    try:
-        st.session_state.stimuli = get_stimuli()
-        st.session_state.ready   = True
-    except Exception as e:
-        st.session_state.error   = str(e)
-    finally:
-        st.experimental_rerun()          # force refresh
-
-if "ready" not in st.session_state:
-    st.session_state.update(dict(
-        ready=False, error=None, page="intro",
-        idx=0,       # index dans la liste courante (train ou réelle)
-        soa=MASK_TIME+WORD_TIME,   # Stimulus Onset Asynchrony courant
-        data=[],     # réponses
-    ))
-    threading.Thread(target=launch_selection, daemon=True).start()
-
-# -------------------------------------------------------------
-#  OUTILS
-# -------------------------------------------------------------
-def show_mask(mask_placeholder, word_placeholder, word, soa):
-    """Affiche d’abord ##### puis le mot, puis retourne l’heure t0"""
-    mask_placeholder.write("#" * len(word))
-    time.sleep(WORD_TIME)
-    word_placeholder.write(word)
-    return time.perf_counter()
-
-def add_response(word, rt_ms, resp):
-    st.session_state.data.append(dict(word=word, rt_ms=rt_ms, response=resp))
-
-# -------------------------------------------------------------
-#  PAGE INTRO
-# -------------------------------------------------------------
-if st.session_state.page == "intro":
-    st.title("Expérience 3 — instructions")
-    st.write("Appuyez sur **Espace** dès que le mot apparaît ; retapez-le puis "
-             "validez avec **Entrée**. Nous commençons par 3 essais.")
-    if st.button("Démarrer"):
-        st.session_state.page = "train"
-        st.experimental_rerun()
-
-# -------------------------------------------------------------
-#  ENTRAÎNEMENT (3 mots)
-# -------------------------------------------------------------
-elif st.session_state.page == "train":
-    i = st.session_state.idx
-    if i >= len(TRAIN_WORDS):
-        st.session_state.page = "wait"
-        st.experimental_rerun()
-    else:
-        word = TRAIN_WORDS[i]
-        st.subheader(f"Essai entraînement {i+1}/3")
-        mask_ph   = st.empty()
-        word_ph   = st.empty()
-        input_ph  = st.empty()
-
-        t0 = show_mask(mask_ph, word_ph, word, st.session_state.soa)
-        resp = input_ph.text_input("Retapez le mot :", key=f"train_{i}")
-        if resp:
-            rt = (time.perf_counter() - t0) * 1000
-            add_response(word, int(rt), resp.strip())
-            st.session_state.idx += 1
-            st.session_state.soa += CYCLE_INC
-            st.experimental_rerun()
-
-# -------------------------------------------------------------
-#  ATTENTE SI MOTS PAS PRÊTS
-# -------------------------------------------------------------
-elif st.session_state.page == "wait":
-    if st.session_state.ready:
-        st.session_state.page = "exp"
-        st.session_state.idx  = 0
-        st.experimental_rerun()
-    elif st.session_state.error:
-        st.error("Erreur tirage : " + st.session_state.error)
-    else:
-        st.info("Préparation des 80 mots… merci de patienter.")
-        st.progress(None)
-
-# -------------------------------------------------------------
-#  EXPÉRIENCE RÉELLE 80 mots
-# -------------------------------------------------------------
-elif st.session_state.page == "exp":
-    i = st.session_state.idx
-    words = st.session_state.stimuli
-
-    if i >= len(words):            # FIN
-        st.success("C'est terminé ! Merci.")
-        df = pd.DataFrame(st.session_state.data)
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Télécharger les résultats", csv,
-                           file_name=f"{uuid.uuid4()}_exp3.csv",
-                           mime="text/csv")
-    else:
-        word = words[i]
-        st.subheader(f"Mot {i+1} / 80")
-        mask_ph = st.empty()
-        word_ph = st.empty()
-        input_ph = st.empty()
-
-        t0 = show_mask(mask_ph, word_ph, word, st.session_state.soa)
-        resp = input_ph.text_input("Retapez le mot :", key=f"exp_{i}")
-        if resp:
-            rt = (time.perf_counter() - t0) * 1000
-            add_response(word, int(rt), resp.strip())
-            st.session_state.idx += 1
-            st.session_state.soa += CYCLE_INC
-            st.experimental_rerun()
+if __name__ == "__main__":
+    main()
