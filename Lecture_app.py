@@ -1,19 +1,19 @@
-# app.py
-# =============================================================
+# app.py  ──────────────────────────────────────────────────────
 # Évaluation Lecture / Écriture – Module 1
-# (identique au script qui fonctionne)
-# + lancement en tâche de fond du tirage des 80 mots
-# =============================================================
+# Formulaire + Test vocabulaire + passage au module 2
+# ──────────────────────────────────────────────────────────────
 
 import streamlit as st
 import pandas as pd
 import uuid
 import threading
 
-# ---------- lancement différé du tirage ----------------------
-def _launch_stimuli():
+# =============================================================
+# Lancer la génération des 80 mots en tâche de fond
+# =============================================================
+def _prepare_stimuli():
     try:
-        from get_stimuli import get_stimuli   # import LÀ, pas en haut
+        from get_stimuli import get_stimuli
         st.session_state["stimuli"] = get_stimuli()
         st.session_state["stimuli_ready"] = True
     except Exception as e:
@@ -21,23 +21,20 @@ def _launch_stimuli():
 
 if "stimuli_ready" not in st.session_state:
     st.session_state.update(stimuli_ready=False, stimuli_error=None)
-    threading.Thread(target=_launch_stimuli, daemon=True).start()
+    threading.Thread(target=_prepare_stimuli, daemon=True).start()
 
-# -------------------------------------------------------------
-#  FONCTION PRINCIPALE
-# -------------------------------------------------------------
+# =============================================================
+# Interface principale
+# =============================================================
 def main():
-    st.set_page_config(
-        page_title="Évaluation Lecture/Écriture – Module 1",
-        page_icon="📝",
-        layout="centered"
-    )
+    st.set_page_config(page_title="Évaluation Lecture/Écriture – Module 1",
+                       page_icon="📝", layout="centered")
 
     st.title("📝 Évaluation Lecture / Écriture – Module 1")
     st.write(
         "Bienvenue ! Remplissez d’abord vos **informations générales**, "
         "puis répondez au **Test 1**. "
-        "Vous pourrez ensuite télécharger un **fichier CSV** contenant vos réponses."
+        "Vous passerez ensuite au module suivant."
     )
 
     # ---------- 1. Informations générales ----------
@@ -48,8 +45,9 @@ def main():
         participant_id = st.text_input(
             "Identifiant participant (facultatif : laissez vide pour qu’il soit généré)"
         )
+
     if participant_id.strip() == "":
-        participant_id = str(uuid.uuid4())
+        participant_id = str(uuid.uuid4())          # identifiant auto
 
     with col2:
         st.markdown("Identifiant utilisé :")
@@ -65,7 +63,7 @@ def main():
 
     st.markdown("---")
 
-    # ---------- 2. Test 1 : Vocabulaire ----------
+    # ---------- 2. Test 1 : vocabulaire ----------
     st.header("Test 1 – Vocabulaire (synonyme)")
     st.write("Choisissez le mot **le plus proche** du sens de : **impétueux**")
 
@@ -74,40 +72,37 @@ def main():
 
     st.markdown("---")
 
-    # ---------- 3. Construction du CSV ----------
+    # ---------- 3. Sauvegarde locale des réponses ----------
     df = pd.DataFrame({
         "participant_id": [participant_id],
-        "age": [age],
+        "age":  [age],
         "sexe": [sexe],
         "etude": [etude],
         "test1_item": ["impétueux"],
         "test1_reponse": [reponse_vocab],
     })
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.session_state["module1_df"] = df          # utile si tu veux le ré-utiliser
 
-    # ---------- 4. Téléchargement ----------
-    st.header("Téléchargement")
+    # ---------- 4. Passage au module suivant ----------
+    st.header("Module suivant")
 
-    st.download_button(
-        "📥 Télécharger mes réponses (CSV)",
-        csv_bytes,
-        file_name=f"{participant_id}_module1.csv",
-        mime="text/csv",
-        disabled=reponse_vocab is None,
-    )
+    btn_disabled = (reponse_vocab is None)
+    if st.button("➡️ Passer au Test 2", disabled=btn_disabled):
+        try:
+            # cas le plus simple : tu utilises le système multi-pages natif
+            st.switch_page("pages/Module2.py")   # adapte le chemin si besoin
+        except (RuntimeError, KeyError):
+            # si tu n’es pas en multi-page, on met juste un flag
+            st.session_state["go_next"] = True
+            st.info("Module 2 : ouvrez la page suivante dans le menu latéral.")
 
-    st.info("Après téléchargement, vous pourrez fermer la page "
-            "ou passer au module suivant.")
-
-    # ---------- (facultatif) état du tirage des 80 mots ----------
+    # ---------- 5. Infos sur la préparation des stimuli ----------
     if st.session_state.get("stimuli_ready"):
         st.success("Les 80 mots du module suivant sont déjà prêts ✅")
     elif st.session_state.get("stimuli_error"):
-        st.error("Échec préparation stimuli : "
+        st.error("Erreur pendant la préparation des 80 mots : "
                  + st.session_state["stimuli_error"])
 
-# -------------------------------------------------------------
-#  POINT D’ENTRÉE
 # -------------------------------------------------------------
 if __name__ == "__main__":
     main()
