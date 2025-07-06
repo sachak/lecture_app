@@ -6,29 +6,33 @@ Lexique : CSV UTF-8, séparateur « ; », décimales « . ».
 """
 
 import json, random
-import pandas as pd, numpy as np
-import streamlit as st, streamlit.components.v1 as components
+import numpy as np
+import pandas as pd
+import streamlit as st
+import streamlit.components.v1 as components
 
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 # 0. CONFIGURATION STREAMLIT
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown(
     "<style>#MainMenu,header,footer{visibility:hidden}</style>",
     unsafe_allow_html=True
 )
 
-# ────────────────────────────────────────────────────────
-# 1. CHARGE LE LEXIQUE
-# ────────────────────────────────────────────────────────
-CSV_FILE = "Lexique383.csv"        # UTF-8 ; « ; » ; « . »
+# ────────────────────────────────────────────────
+# 1. CHARGEMENT DU LEXIQUE
+# ────────────────────────────────────────────────
+CSV_FILE = "Lexique383.csv"          # UTF-8 ; « ; » ; « . »
 
 @st.cache_data(show_spinner="Chargement du lexique…")
 def load_lexique() -> pd.DataFrame:
-    df = pd.read_csv(CSV_FILE, sep=";", decimal=".", encoding="utf-8",
-                     dtype=str, engine="python", on_bad_lines="skip")
+    df = pd.read_csv(
+        CSV_FILE, sep=";", decimal=".", encoding="utf-8",
+        dtype=str, engine="python", on_bad_lines="skip"
+    )
 
-    # harmonise les noms de colonnes
+    # Harmonise les noms de colonnes
     ren = {}
     for col in df.columns:
         low = col.lower()
@@ -46,21 +50,21 @@ def load_lexique() -> pd.DataFrame:
             ren[col] = "pho"
     df = df.rename(columns=ren)
 
-    need = {"word", "old20", "pld20", "freq", "let", "pho"}
-    if miss := (need - set(df.columns)):
-        raise ValueError(f"Colonnes manquantes : {', '.join(miss)}")
+    expected = {"word", "old20", "pld20", "freq", "let", "pho"}
+    if missing := expected - set(df.columns):
+        raise ValueError(f"Colonnes manquantes : {', '.join(missing)}")
 
     df.word = df.word.str.upper()
-    for c in need - {"word"}:
+    for c in expected - {"word"}:
         df[c] = df[c].astype(float)
 
     return df.dropna()
 
 LEX = load_lexique()
 
-# ────────────────────────────────────────────────────────
-# 2. CRITÈRES FIXES (OLD/PLD)
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
+# 2. CRITÈRES FIXES (OLD / PLD)
+# ────────────────────────────────────────────────
 MASKS = {
     "LOW_OLD" :  LEX.old20 < 1.11,
     "HIGH_OLD":  LEX.old20 > 3.79,
@@ -76,15 +80,15 @@ def enlarge(win: dict, step: float) -> dict:
     """Élargit chaque intervalle de ±step."""
     return {k: (v[0]-step, v[1]+step) for k, v in win.items()}
 
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 # 3. SÉLECTION ADAPTATIVE DES 80 MOTS
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 @st.cache_data(show_spinner="Sélection des 80 mots…")
 def pick_stimuli() -> list[str]:
     rng = np.random.default_rng()
 
     step = 0.0
-    while step <= 2.0:                         # élargissement max ±2
+    while step <= 2.0:                       # élargissement max ±2
         win = enlarge(BASE_WIN, step)
         chosen: set[str] = set()
         final:  list[str] = []
@@ -93,12 +97,16 @@ def pick_stimuli() -> list[str]:
         for name, mask in MASKS.items():
             pool = LEX.loc[mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
 
-            if len(pool) < 20:                 # pas assez de candidats
+            # au moins 20 candidats ?
+            if len(pool) < 20:
                 success = False
                 break
 
-            # 10 000 échantillons de 20 mots
-            idx_samples = rng.choice(len(pool), size=(10_000, 20), replace=False)
+            # 10 000 échantillons de 20 indices (sans remise dans chaque échantillon)
+            idx_samples = np.array(
+                [rng.choice(len(pool), size=20, replace=False) for _ in range(10_000)]
+            )
+
             med_freq = np.median(pool.freq.values[idx_samples], axis=1)
             med_let  = np.median(pool.let .values[idx_samples], axis=1)
             med_pho  = np.median(pool.pho .values[idx_samples], axis=1)
@@ -107,9 +115,9 @@ def pick_stimuli() -> list[str]:
                   (win["let" ][0] <= med_let ) & (med_let  <= win["let" ][1]) &
                   (win["pho" ][0] <= med_pho ) & (med_pho  <= win["pho" ][1]))
 
-            if ok.any():                       # échantillon parfait
+            if ok.any():                           # parfait
                 best_idx = np.flatnonzero(ok)[0]
-            else:                              # meilleur compromis
+            else:                                  # meilleur compromis
                 penalty = (np.clip(win["freq"][0]-med_freq,0,None) +
                            np.clip(med_freq-win["freq"][1],0,None) +
                            np.clip(win["let"][0]-med_let ,0,None) +
@@ -123,29 +131,29 @@ def pick_stimuli() -> list[str]:
             final.extend(sample.word.tolist())
             chosen.update(sample.word)
 
-        if success and len(final) == 80:       # réussite
+        if success and len(final) == 80:
             if step > 0:
-                st.info(f"Fenêtres élargies de ±{step:.1f} pour satisfaire les contraintes.")
+                st.info(f"Fenêtres élargies de ±{step:.1f} pour satisfaire toutes les contraintes.")
             random.shuffle(final)
             return final
 
-        step += 0.1                            # élargit et réessaye
+        step += 0.1                            # élargit et recommence
 
     st.error("Impossible de constituer 80 mots même avec un élargissement ±2.")
     st.stop()
 
 STIMULI = pick_stimuli()
 
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 # 4. PARAMÈTRES VISUELS
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 CYCLE = 350      # durée mot + masque (ms)
 START = 14       # 1ʳᵉ exposition (ms)
 STEP  = 14       # incrément (ms)
 
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 # 5. INTERFACE UTILISATEUR
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
@@ -155,9 +163,9 @@ if st.session_state.page == "intro":
         st.session_state.page = "exp"
         st.experimental_rerun()
 
-# ────────────────────────────────────────────────────────
-# 6. PAGE EXPÉRIMENTALE (HTML/JS)
-# ────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────
+# 6. PAGE EXPÉRIMENTALE (HTML / JS)
+# ────────────────────────────────────────────────
 elif st.session_state.page == "exp":
     html = f"""
 <!DOCTYPE html>
@@ -180,7 +188,7 @@ body {{ user-select:none; margin:0; display:flex; flex-direction:column;
 // focus automatique
 window.addEventListener('load', () => document.getElementById('body').focus());
 
-// paramètres envoyés par Python
+// paramètres depuis Python
 const W = {json.dumps(STIMULI)};
 const C = {CYCLE};
 const S = {START};
