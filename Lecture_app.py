@@ -1,26 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 : sélection adaptative de 80 mots (4 × 20).
+EXPÉRIENCE 3 – version « tirage » 4 × 20 mots (5 par feuille × 4 feuilles).
 
-Format du résultat : CSV UTF-8, séparateur « ; », décimales « . ».
-
-Étapes :
-1. Chargement du Lexique 383 (fichier « Lexique383.csv » placé dans le même
-   dossier que ce script).
-2. Sélection adaptative de 4 × 20 mots répondant à des contraintes OLD20/PLD20
-   et équilibrés sur la fréquence, la longueur orthographique et le nombre
-   de phonèmes ; les fenêtres sont élargies jusqu’à trouver une solution.
-3. Protocole visuel (mot masqué progressivement) exécuté en HTML/Javascript
-   dans Streamlit.
-4. Export CSV des réponses.
+• Fichier attendu : Lexique.xlsx (4 feuilles Feuil1…Feuil4)
+• Résultat        : experience.csv (séparateur “;”, décimale “.”)
 
 Lancer :  streamlit run exp3.py
 """
-
 from __future__ import annotations
 
-import json
-import random
+# ─────────────────────────────── IMPORTS ───────────────────────────────────── #
+import json, random, sys, time
 from pathlib import Path
 
 import numpy as np
@@ -28,184 +18,219 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ───────────────────────────── 0. CONFIG STREAMLIT ─────────────────────────── #
+# ───────────────────────── 0. CONFIG STREAMLIT ────────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown(
     """
     <style>
         #MainMenu, header, footer {visibility: hidden;}
-        .css-1d391kg {display: none;}  /* ancien sélecteur Streamlit */
+        .css-1d391kg {display: none;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ─────────────────────────── 1. CHARGEMENT DU LEXIQUE ──────────────────────── #
-CSV_FILE = Path(__file__).with_name("Lexique383.csv")
+# =============================================================================
+# 1.  PARAMÈTRES DU TIRAGE (repris de build_stimuli_tirage.py)
+# =============================================================================
+MEAN_FACTOR_OLDPLD = 0.40
 
-@st.cache_data(show_spinner="Chargement du lexique…")
-def load_lexique() -> pd.DataFrame:
-    """Charge le fichier Lexique383.csv et met en forme les colonnes utiles."""
-    if not CSV_FILE.exists():
-        st.error(f"Fichier « {CSV_FILE.name} » introuvable.")
-        st.stop()
+MEAN_DELTA = {"letters": 0.70, "phons": 0.70}
 
-    df = pd.read_csv(
-        CSV_FILE,
-        sep=";",
-        decimal=".",
-        dtype=str,
-        encoding="utf-8",
-        engine="python",
-        on_bad_lines="skip",
+SD_MULTIPLIER = {
+    "letters": 2.00,
+    "phons"  : 2.00,
+    "old20"  : 0.25,
+    "pld20"  : 0.25,
+    "freq"   : 10.00,
+}
+
+XLSX     = Path(__file__).with_name("Lexique.xlsx")
+N_PER_FEUIL_TAG = 5
+TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
+MAX_TRY_TAG     = 1_000
+MAX_TRY_FULL    = 1_000
+rng = random.Random()         # rng.seed(123)  # (optionnel)
+
+NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
+
+# =============================================================================
+# 2.  OUTILS
+# =============================================================================
+def to_float(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(
+        s.astype(str)
+         .str.replace(" ",  "", regex=False)
+         .str.replace("\xa0","", regex=False)
+         .str.replace(",", ".", regex=False),
+        errors="coerce"
     )
 
-    # Harmonisation des noms de colonnes
-    rename: dict[str, str] = {}
-    for col in df.columns:
-        lc = col.lower()
-        if any(k in lc for k in ("étiquettes", "ortho", "word")):
-            rename[col] = "word"
-        elif "old20" in lc:
-            rename[col] = "old20"
-        elif "pld20" in lc:
-            rename[col] = "pld20"
-        elif "freqlemfilms2" in lc:
-            rename[col] = "freq"
-        elif "nblettres" in lc:
-            rename[col] = "let"
-        elif "nbphons" in lc:
-            rename[col] = "pho"
+def shuffled(df: pd.DataFrame) -> pd.DataFrame:
+    return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-    df = df.rename(columns=rename)
+def cat_code(tag: str) -> int:
+    return -1 if "LOW" in tag else 1
 
-    required = {"word", "old20", "pld20", "freq", "let", "pho"}
-    if not required.issubset(df.columns):
-        st.error(
-            "Colonnes manquantes dans le lexique : "
-            + ", ".join(sorted(required - set(df.columns)))
-        )
+# =============================================================================
+# 3.  LECTURE DU CLASSEUR + CONSTRUCTION DES 80 MOTS (fonctions @cache_data)
+# =============================================================================
+@st.cache_data(show_spinner="Chargement du classeur Excel…")
+def load_sheets() -> dict[str, dict]:
+    if not XLSX.exists():
+        st.error(f"Fichier « {XLSX.name} » introuvable.")
         st.stop()
 
-    df["word"] = df["word"].str.upper()
-    for c in required - {"word"}:
-        df[c] = df[c].astype(float)
+    xls = pd.ExcelFile(XLSX)
+    sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
+    if len(sheet_names) != 4:
+        st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4.")
+        st.stop()
 
-    return df.dropna(subset=required)
+    feuilles: dict[str, dict] = {}
+    all_freq_cols: set[str] = set()
+
+    for sh in sheet_names:
+        df = xls.parse(sh)
+        df.columns = df.columns.str.strip().str.lower()
+
+        freq_cols_sheet = [c for c in df.columns if c.startswith("freq")]
+        all_freq_cols.update(freq_cols_sheet)
+
+        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols_sheet
+        if any(c not in df.columns for c in need):
+            st.error(f"Colonnes manquantes dans {sh}")
+            st.stop()
+
+        for col in NUM_BASE + freq_cols_sheet:
+            df[col] = to_float(df[col])
+
+        df["ortho"] = df["ortho"].astype(str).str.upper()
+        df = df.dropna(subset=need).reset_index(drop=True)
+
+        stats = {f"m_{c}": df[c].mean()  for c in ("old20", "pld20", "nblettres", "nbphons")}
+        stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
+                  ("old20", "pld20", "nblettres", "nbphons") + tuple(freq_cols_sheet)}
+
+        feuilles[sh] = {"df": df, "stats": stats, "freq_cols": freq_cols_sheet}
+
+    feuilles["all_freq_cols"] = sorted(all_freq_cols)
+    return feuilles
 
 
-LEX: pd.DataFrame = load_lexique()
-
-# ─────────────────────── 2. MASQUES ET FENÊTRES INITIALES ──────────────────── #
-MASKS = {
-    "LOW_OLD": LEX.old20 < 10.11,
-    "HIGH_OLD": LEX.old20 > 0.79,
-    "LOW_PLD": LEX.pld20 < 10.70,
-    "HIGH_PLD": LEX.pld20 > 0.20,
-}
-
-BASE_WIN = {
-    "freq": (0.44, 59.94),  # Log-freq (freqlemfilms2)
-    "let": (0.5, 59.5),  # Nombre de lettres
-    "pho": (0.5, 59.5),  # Nombre de phonèmes
-}
+def masks(df: pd.DataFrame, st: dict) -> dict[str, pd.Series]:
+    return {
+        "LOW_OLD" : df.old20 <  st["m_old20"] - st["sd_old20"],
+        "HIGH_OLD": df.old20 >  st["m_old20"] + st["sd_old20"],
+        "LOW_PLD" : df.pld20 <  st["m_pld20"] - st["sd_pld20"],
+        "HIGH_PLD": df.pld20 >  st["m_pld20"] + st["sd_pld20"],
+    }
 
 
-def enlarge(win: dict[str, tuple[float, float]], step: float) -> dict[str, tuple[float, float]]:
-    """Élargit chaque intervalle numérique d’une valeur ± step."""
-    return {k: (v[0] - step, v[1] + step) for k, v in win.items()}
+def sd_ok(sub: pd.DataFrame, st: dict, fq_cols: list[str]) -> bool:
+    return (
+        sub.nblettres.std(ddof=0) <= st["sd_nblettres"] * SD_MULTIPLIER["letters"] and
+        sub.nbphons.std(ddof=0)   <= st["sd_nbphons"]   * SD_MULTIPLIER["phons"]   and
+        sub.old20.std(ddof=0)     <= st["sd_old20"]     * SD_MULTIPLIER["old20"]   and
+        sub.pld20.std(ddof=0)     <= st["sd_pld20"]     * SD_MULTIPLIER["pld20"]   and
+        all(sub[c].std(ddof=0) <= st[f"sd_{c}"] * SD_MULTIPLIER["freq"] for c in fq_cols)
+    )
 
 
-# ─────────────────────── 3. SÉLECTION ADAPTATIVE DES MOTS ──────────────────── #
-@st.cache_data(show_spinner="Sélection des 80 mots…")
-def pick_stimuli() -> list[str]:
-    """Retourne une liste aléatoire de 80 mots (4×20) satisfaisant les contraintes."""
-    rng = np.random.default_rng()
+def mean_lp_ok(sub: pd.DataFrame, st: dict) -> bool:
+    return (
+        abs(sub.nblettres.mean() - st["m_nblettres"]) <= MEAN_DELTA["letters"] * st["sd_nblettres"] and
+        abs(sub.nbphons.mean()   - st["m_nbphons"])   <= MEAN_DELTA["phons"]   * st["sd_nbphons"]
+    )
 
-    step = 0.0
-    while step <= 2.0:  # élargissement max ± 2
-        win = enlarge(BASE_WIN, step)
-        chosen: set[str] = set()  # mots déjà tirés (unicité globale)
-        final: list[str] = []
-        success = True
 
-        # Boucle sur les 4 conditions OLD/PLD
-        for cond_name, cond_mask in MASKS.items():
-            pool = LEX.loc[cond_mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
+def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
+    df   = FEUILLES[feuille]["df"]
+    st   = FEUILLES[feuille]["stats"]
+    fqs  = FEUILLES[feuille]["freq_cols"]
+    pool = df.loc[masks(df, st)[tag] & ~df.ortho.isin(used)]
+    if len(pool) < N_PER_FEUIL_TAG:
+        return None
 
-            if len(pool) < 20:  # impossible à ce pas
-                success = False
+    for _ in range(MAX_TRY_TAG):
+        samp = pool.sample(N_PER_FEUIL_TAG,
+                           random_state=rng.randint(0, 1_000_000)).copy()
+
+        # distance OLD/PLD suffisante
+        if tag == "LOW_OLD"  and samp.old20.mean() >= st["m_old20"] - MEAN_FACTOR_OLDPLD*st["sd_old20"]:  continue
+        if tag == "HIGH_OLD" and samp.old20.mean() <= st["m_old20"] + MEAN_FACTOR_OLDPLD*st["sd_old20"]:  continue
+        if tag == "LOW_PLD"  and samp.pld20.mean() >= st["m_pld20"] - MEAN_FACTOR_OLDPLD*st["sd_pld20"]:  continue
+        if tag == "HIGH_PLD" and samp.pld20.mean() <= st["m_pld20"] + MEAN_FACTOR_OLDPLD*st["sd_pld20"]:  continue
+
+        if not mean_lp_ok(samp, st):
+            continue
+        if sd_ok(samp, st, fqs):
+            samp["source"]  = feuille
+            samp["group"]   = tag
+            samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
+            samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
+            return samp
+    return None
+
+
+@st.cache_data(show_spinner="Tirage aléatoire des 80 mots…")
+def build_sheet() -> pd.DataFrame:
+    FEUILLES = load_sheets()
+    all_freq_cols = FEUILLES["all_freq_cols"]
+    for _ in range(MAX_TRY_FULL):
+        taken  = {sh: set() for sh in FEUILLES if sh != "all_freq_cols"}
+        groups = []
+        ok = True
+
+        for tag in TAGS:
+            parts = []
+            for sh in taken:
+                sub = pick_five(tag, sh, taken[sh], FEUILLES)
+                if sub is None:
+                    ok = False
+                    break
+                parts.append(sub)
+                taken[sh].update(sub.ortho)
+            if not ok:
                 break
+            groups.append(shuffled(pd.concat(parts, ignore_index=True)))
 
-            # 10 000 tirages indépendants de 20 indices sans remise
-            idx_samples = np.array(
-                [rng.choice(len(pool), size=20, replace=False) for _ in range(10_000)]
-            )
+        if ok:
+            df = pd.concat(groups, ignore_index=True)
+            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group", "old_cat", "pld_cat"]
+            return df[order]
 
-            med_freq = np.median(pool.freq.values[idx_samples], axis=1)
-            med_let = np.median(pool.let.values[idx_samples], axis=1)
-            med_pho = np.median(pool.pho.values[idx_samples], axis=1)
-
-            ok = (
-                (win["freq"][0] <= med_freq)
-                & (med_freq <= win["freq"][1])
-                & (win["let"][0] <= med_let)
-                & (med_let <= win["let"][1])
-                & (win["pho"][0] <= med_pho)
-                & (med_pho <= win["pho"][1])
-            )
-
-            if ok.any():  # échantillon parfait
-                best = int(np.flatnonzero(ok)[0])
-            else:  # meilleur compromis
-                penalty = (
-                    np.clip(win["freq"][0] - med_freq, 0, None)
-                    + np.clip(med_freq - win["freq"][1], 0, None)
-                    + np.clip(win["let"][0] - med_let, 0, None)
-                    + np.clip(med_let - win["let"][1], 0, None)
-                    + np.clip(win["pho"][0] - med_pho, 0, None)
-                    + np.clip(med_pho - win["pho"][1], 0, None)
-                )
-                best = int(penalty.argmin())
-                st.warning(
-                    f"{cond_name} : médianes approchées (pénalité {penalty[best]:.2f})."
-                )
-
-            sample = pool.iloc[idx_samples[best]]
-            chosen.update(sample.word)
-            final.extend(sample.word.tolist())
-
-        if success and len(final) == 80:
-            if step > 0:
-                st.info(f"Fenêtres élargies de ±{step:.1f} pour atteindre la solution.")
-            random.shuffle(final)
-            return final
-
-        step = round(step + 0.1, 9)  # évite les flottants
-
-    st.error("Impossible de constituer 80 mots uniques même après élargissement ± 2.")
+    st.error("Impossible de générer la liste (contraintes trop strictes).")
     st.stop()
 
 
-STIMULI: list[str] = pick_stimuli()
+# =============================================================================
+# 4.  LISTE DES STIMULI PRÊTE POUR L’EXPÉRIMENTATION
+# =============================================================================
+tirage_df = build_sheet()
+STIMULI   = tirage_df["ortho"].tolist()
+random.shuffle(STIMULI)          # ordre expérimental aléatoire
 
-# ─────────────────────── 4. PROTOCOLE VISUEL (STREAMLIT) ───────────────────── #
-CYCLE_MS = 350  # durée totale mot + masque
-START_MS = 14  # premier affichage du mot (ms)
-STEP_MS = 14  # incrément (ms)
+# =============================================================================
+# 5.  PARTIE VISUELLE : IDENTIQUE À L’ANCIEN SCRIPT
+# =============================================================================
+CYCLE_MS = 350
+START_MS = 14
+STEP_MS  = 14
 
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-# ----------------------------- page d'introduction --------------------------- #
+# ----------------------------- page intro ----------------------------------- #
 if st.session_state.page == "intro":
-    st.title("EXPERIENCE 3 – mots masqués (CSV décimal « . »)")
+    st.title("EXPERIENCE 3 – mots masqués (tirage contraint)")
+    with st.expander("Statistiques du tirage (aperçu)"):
+        st.dataframe(tirage_df.head())
     if st.button("Démarrer l’expérience"):
         st.session_state.page = "exp"
-        # Avec Streamlit ≥1.25
         st.rerun()
 
-# --------------------------------- expérience -------------------------------- #
+# ----------------------------- expérience ----------------------------------- #
 else:
     html = f"""
 <!DOCTYPE html>
@@ -259,7 +284,6 @@ function nextTrial() {{
     const w = WORDS[trial];
     const mask = "#".repeat(w.length);
 
-    // Durées mot / masque variables
     let showDur = START;
     let hideDur = CYCLE - showDur;
     let tShow, tHide;
