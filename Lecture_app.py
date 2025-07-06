@@ -1,156 +1,83 @@
 # -*- coding: utf-8 -*-
 # =============================================================
-#  Lecture_app.py  –  version auto-refresh + accolades échappées
+# Lecture_app.py  –  Module 1 + 3 essais fixes + tirage en tâche de fond
 # =============================================================
-import json, random, threading, time, pandas as pd, numpy as np
-import streamlit as st
-import streamlit.components.v1 as components
-from get_stimuli import get_stimuli          # ← module qui calcule les 80 mots
+import threading, time, uuid, pandas as pd, streamlit as st
+from get_stimuli import get_stimuli          # prépare les 80 mots
 
-# ---------- CONFIGURATION VISUELLE ----------------------------
-st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
-            unsafe_allow_html=True)
-
-# ---------- PETIT LEXIQUE (3 mots d’entraînement) -------------
-CSV_FILE = "Lexique383.csv"
-@st.cache_data(show_spinner="Chargement du lexique…")
-def load_lex():
-    df = pd.read_csv(CSV_FILE, sep=";", decimal=".", encoding="utf-8",
-                     dtype=str, engine="python", on_bad_lines="skip")
-    df = df.rename(columns=lambda c: c.lower()).rename(columns={"ortho": "word"})
-    df.word = df.word.str.upper()
-    return df[["word"]].dropna()
-LEX = load_lex()
-
-# ---------- LANCER la sélection des 80 mots en TÂCHE DE FOND --
-def _launch_selection():
+# ------------------ préparation asynchrone des 80 mots ------------------
+def _prepare():
     try:
-        st.session_state["stimuli"] = get_stimuli()
-        st.session_state["stimuli_ready"] = True
+        st.session_state.stimuli = get_stimuli()
+        st.session_state.ready   = True
     except Exception as e:
-        st.session_state["stimuli_error"] = str(e)
-        st.session_state["stimuli_ready"] = False
-    # forcer un nouveau run dès que la génération se termine
-    try:
-        st.experimental_rerun()
-    except st.runtime.scriptrunner.StopException:
-        pass
-
-if "stimuli_ready" not in st.session_state:
-    st.session_state.update({"stimuli_ready": False,
-                             "stimuli_error": None})
-    threading.Thread(target=_launch_selection, daemon=True).start()
-
-# ---------- 3 mots d’entraînement -----------------------------
-TRAIN_WORDS = random.sample([w for w in LEX.word if len(w) == 3], k=3)
-
-# ---------- NAVIGATION ----------------------------------------
-if "page" not in st.session_state:
-    st.session_state.page = "intro"
-    st.session_state.train_idx = 0
-
-# =================================================================
-#  PAGE INTRO
-# =================================================================
-if st.session_state.page == "intro":
-    st.title("EXPERIENCE 3 — instructions")
-    st.markdown("""
-    Appuyez sur **Espace** dès que le mot apparaît, retapez-le puis validez
-    avec **Entrée**.  
-    Nous commençons par **3 essais d’entraînement**.
-    """)
-    if st.button("Je suis prêt·e"):
-        st.session_state.page = "train"
+        st.session_state.error   = str(e)
+    finally:
         st.experimental_rerun()
 
-# =================================================================
-#  PAGE ENTRAÎNEMENT
-# =================================================================
-elif st.session_state.page == "train":
-    i = st.session_state.train_idx
-    if i >= len(TRAIN_WORDS):
-        st.session_state.page = "wait_real"
-        st.experimental_rerun()
-    else:
-        st.subheader(f"Essai d’entraînement {i+1}/{len(TRAIN_WORDS)}")
-        st.write("Mot cible :", TRAIN_WORDS[i])
-        if st.button("Valider (fictif)"):
-            st.session_state.train_idx += 1
+if "ready" not in st.session_state:
+    st.session_state.update(dict(ready=False, error=None))
+    threading.Thread(target=_prepare, daemon=True).start()
+
+# ------------------ essais d’entraînement (fixes) -----------------------
+TRAIN_WORDS = ["MER", "SAC", "LOT"]
+
+# ------------------ interface Module 1 ----------------------------------
+def main():
+    st.set_page_config(page_title="Évaluation Lecture/Écriture – Module 1",
+                       page_icon="📝", layout="centered")
+
+    if "page"  not in st.session_state: st.session_state.page  = "form"
+    if "idx"   not in st.session_state: st.session_state.idx   = 0
+
+    # ========== étape 1 : formulaire ====================================
+    if st.session_state.page == "form":
+        st.title("📝 Module 1 – formulaire + essais")
+        pid = st.text_input("Identifiant participant (laisser vide ➡️ auto)")
+        if pid.strip() == "": pid = str(uuid.uuid4())
+        st.code(pid, language="")
+        age  = st.number_input("Âge", 16, 99, 25, 1)
+        sexe = st.radio("Sexe", ["Femme", "Homme", "Autre"], horizontal=True)
+        etud = st.selectbox("Niveau d'étude",
+                            ["Collège","Lycée","Bac","Bac+2",
+                             "Licence/Master","Doctorat","Autre"])
+        st.markdown("---")
+
+        # ======= Test vocabulaire (impétueux) ============================
+        st.header("Test 1 – vocabulaire")
+        opt = ["Calme","Fougueux","Timide","Lent"]
+        rep = st.radio("Synonyme de **impétueux** :", opt, index=None)
+
+        if rep is not None:
+            st.session_state.answers = pd.DataFrame({
+                "participant_id":[pid], "age":[age], "sexe":[sexe],
+                "etude":[etud], "test1_item":["impétueux"],
+                "test1_reponse":[rep]
+            })
+            st.session_state.page = "train"
             st.experimental_rerun()
 
-# =================================================================
-#  PAGE TAMPO « wait_real »
-# =================================================================
-elif st.session_state.page == "wait_real":
-    if st.session_state.get("stimuli_ready"):
-        st.session_state.page = "exp"
-        st.experimental_rerun()
-    elif st.session_state.get("stimuli_error"):
-        st.error("Erreur pendant la génération des stimuli :\n\n"
-                 + st.session_state["stimuli_error"])
-    else:
-        st.info("Préparation des 80 mots… merci de patienter.")
-        st.progress(None)
-        time.sleep(2)
-        st.experimental_rerun()
+    # ========== étape 2 : entraînement (3 mots) =========================
+    elif st.session_state.page == "train":
+        i = st.session_state.idx
+        if i >= 3:
+            st.session_state.page = "wait"; st.experimental_rerun()
+        else:
+            st.subheader(f"Essai d’entraînement {i+1}/3")
+            st.write("Mot :", TRAIN_WORDS[i])
+            if st.button("Valider (fictif)"):
+                st.session_state.idx += 1
+                st.experimental_rerun()
 
-# =================================================================
-#  PAGE EXPÉRIENCE (80 mots)
-# =================================================================
-elif st.session_state.page == "exp":
-    STIMULI = st.session_state["stimuli"]          # liste des 80 mots
-    CYCLE, START, STEP = 350, 14, 14               # paramètres JS
+    # ========== étape 3 : attente que les 80 mots soient prêts ==========
+    elif st.session_state.page == "wait":
+        if st.session_state.ready:
+            st.success("80 mots prêts ! ➡️ Ouvrez le Module 2.")
+        elif st.session_state.error:
+            st.error("Erreur préparation stimuli :\n"+st.session_state.error)
+        else:
+            st.info("Préparation des 80 mots…"); st.progress(None); time.sleep(2); st.experimental_rerun()
 
-    html = f"""
-<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-html,body{{{{height:100%;margin:0;display:flex;align-items:center;justify-content:center;
-font-family:'Courier New',monospace}}}}
-#scr{{{{font-size:60px;user-select:none}}}}
-#ans{{{{display:none;font-size:48px;width:60%;text-align:center}}}}
-</style></head>
-<body id="body" tabindex="0">
-<div id="scr"></div><input id="ans" autocomplete="off"/>
-<script>
-window.addEventListener('load',()=>document.getElementById('body').focus());
-
-const W={json.dumps(STIMULI)},C={CYCLE},S={START},P={STEP};
-let i=0,res=[];
-const scr=document.getElementById('scr'), ans=document.getElementById('ans');
-
-function run(){{{{ if(i>=W.length){{{{fin();return;}}}}  
-  const w=W[i],m='#'.repeat(w.length);
-  let sd=S,md=C-sd,t0=performance.now(),on=true,t1,t2;
-  (function loop(){{{{ if(!on)return;
-    scr.textContent=w;
-    t1=setTimeout(()=>{{{{ if(!on)return;
-       scr.textContent=m;
-       t2=setTimeout(()=>{{{{ if(on){{{{ sd+=P;md=Math.max(0,C-sd);loop(); }}}} }}}},md);
-    }}}},sd);
-  }}}})();
-  window.addEventListener('keydown',function sp(e){{{{ if(e.code==='Space'&&on){{{{ 
-        on=false;clearTimeout(t1);clearTimeout(t2);
-        const rt=Math.round(performance.now()-t0);
-        window.removeEventListener('keydown',sp);
-        scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
-        ans.addEventListener('keydown',function ent(ev){{{{ if(ev.key==='Enter'){{{{ 
-           ev.preventDefault();
-           res.push({{{{word:w,rt_ms:rt,response:ans.value.trim()}}}});
-           ans.removeEventListener('keydown',ent);
-           ans.style.display='none';i++;run();
-        }}}} }}}}); }}}} }}}});
-}}}}
-
-function fin(){{{{ scr.style.fontSize='40px';scr.textContent='Merci !';
-  const csv=['word;rt_ms;response',...res.map(r=>r.word+';'+r.rt_ms+';'+r.response)].join('\\n');
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{{{{type:'text/csv'}}}}));
-  a.download='results.csv';
-  a.textContent='Télécharger les résultats';
-  a.style.fontSize='32px';a.style.marginTop='30px';
-  document.body.appendChild(a);
-}}}}
-run();
-</script></body></html>"""
-    components.html(html, height=650, scrolling=False)
+# -----------------------------------------------------------------------
+if __name__ == "__main__":
+    main()
