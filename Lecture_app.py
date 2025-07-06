@@ -61,7 +61,7 @@ def load_lexique() -> pd.DataFrame:
     )
 
     # Harmonisation des noms de colonnes
-    rename = {}
+    rename: dict[str, str] = {}
     for col in df.columns:
         lc = col.lower()
         if any(k in lc for k in ("étiquettes", "ortho", "word")):
@@ -81,8 +81,10 @@ def load_lexique() -> pd.DataFrame:
 
     required = {"word", "old20", "pld20", "freq", "let", "pho"}
     if not required.issubset(df.columns):
-        st.error("Colonnes manquantes dans le lexique : "
-                 + ", ".join(sorted(required - set(df.columns))))
+        st.error(
+            "Colonnes manquantes dans le lexique : "
+            + ", ".join(sorted(required - set(df.columns)))
+        )
         st.stop()
 
     df["word"] = df["word"].str.upper()
@@ -91,26 +93,28 @@ def load_lexique() -> pd.DataFrame:
 
     return df.dropna(subset=required)
 
+
 LEX: pd.DataFrame = load_lexique()
 
 # ─────────────────────── 2. MASQUES ET FENÊTRES INITIALES ──────────────────── #
 MASKS = {
-    "LOW_OLD" :  LEX.old20 < 10.11,
-    "HIGH_OLD":  LEX.old20 > 0.79,
-    "LOW_PLD" :  LEX.pld20 < 10.70,
-    "HIGH_PLD":  LEX.pld20 > 0.20,
+    "LOW_OLD": LEX.old20 < 10.11,
+    "HIGH_OLD": LEX.old20 > 0.79,
+    "LOW_PLD": LEX.pld20 < 10.70,
+    "HIGH_PLD": LEX.pld20 > 0.20,
 }
 
 BASE_WIN = {
-    "freq": (0.44, 59.94),   # Log-freq (freqlemfilms2)
-    "let":  (0.5,  59.5),    # Nombre de lettres
-    "pho":  (0.5,  59.5),    # Nombre de phonèmes
+    "freq": (0.44, 59.94),  # Log-freq (freqlemfilms2)
+    "let": (0.5, 59.5),  # Nombre de lettres
+    "pho": (0.5, 59.5),  # Nombre de phonèmes
 }
 
-def enlarge(win: dict[str, tuple[float, float]], step: float
-            ) -> dict[str, tuple[float, float]]:
+
+def enlarge(win: dict[str, tuple[float, float]], step: float) -> dict[str, tuple[float, float]]:
     """Élargit chaque intervalle numérique d’une valeur ± step."""
     return {k: (v[0] - step, v[1] + step) for k, v in win.items()}
+
 
 # ─────────────────────── 3. SÉLECTION ADAPTATIVE DES MOTS ──────────────────── #
 @st.cache_data(show_spinner="Sélection des 80 mots…")
@@ -119,9 +123,9 @@ def pick_stimuli() -> list[str]:
     rng = np.random.default_rng()
 
     step = 0.0
-    while step <= 2.0:                                      # élargissement max ± 2
+    while step <= 2.0:  # élargissement max ± 2
         win = enlarge(BASE_WIN, step)
-        chosen: set[str] = set()          # mots déjà tirés (unicité globale)
+        chosen: set[str] = set()  # mots déjà tirés (unicité globale)
         final: list[str] = []
         success = True
 
@@ -129,7 +133,7 @@ def pick_stimuli() -> list[str]:
         for cond_name, cond_mask in MASKS.items():
             pool = LEX.loc[cond_mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
 
-            if len(pool) < 20:                              # impossible à ce pas
+            if len(pool) < 20:  # impossible à ce pas
                 success = False
                 break
 
@@ -139,29 +143,33 @@ def pick_stimuli() -> list[str]:
             )
 
             med_freq = np.median(pool.freq.values[idx_samples], axis=1)
-            med_let  = np.median(pool.let .values[idx_samples], axis=1)
-            med_pho  = np.median(pool.pho .values[idx_samples], axis=1)
+            med_let = np.median(pool.let.values[idx_samples], axis=1)
+            med_pho = np.median(pool.pho.values[idx_samples], axis=1)
 
             ok = (
-                (win["freq"][0] <= med_freq) & (med_freq <= win["freq"][1]) &
-                (win["let" ][0] <= med_let ) & (med_let  <= win["let" ][1]) &
-                (win["pho" ][0] <= med_pho ) & (med_pho  <= win["pho" ][1])
+                (win["freq"][0] <= med_freq)
+                & (med_freq <= win["freq"][1])
+                & (win["let"][0] <= med_let)
+                & (med_let <= win["let"][1])
+                & (win["pho"][0] <= med_pho)
+                & (med_pho <= win["pho"][1])
             )
 
-            if ok.any():                                      # échantillon parfait
+            if ok.any():  # échantillon parfait
                 best = int(np.flatnonzero(ok)[0])
-            else:                                             # meilleur compromis
+            else:  # meilleur compromis
                 penalty = (
-                    np.clip(win["freq"][0] - med_freq, 0, None) +
-                    np.clip(med_freq         - win["freq"][1], 0, None) +
-                    np.clip(win["let" ][0] - med_let,  0, None) +
-                    np.clip(med_let          - win["let" ][1], 0, None) +
-                    np.clip(win["pho" ][0] - med_pho, 0, None) +
-                    np.clip(med_pho          - win["pho" ][1], 0, None)
+                    np.clip(win["freq"][0] - med_freq, 0, None)
+                    + np.clip(med_freq - win["freq"][1], 0, None)
+                    + np.clip(win["let"][0] - med_let, 0, None)
+                    + np.clip(med_let - win["let"][1], 0, None)
+                    + np.clip(win["pho"][0] - med_pho, 0, None)
+                    + np.clip(med_pho - win["pho"][1], 0, None)
                 )
                 best = int(penalty.argmin())
-                st.warning(f"{cond_name} : médianes approchées "
-                           f"(pénalité {penalty[best]:.2f}).")
+                st.warning(
+                    f"{cond_name} : médianes approchées (pénalité {penalty[best]:.2f})."
+                )
 
             sample = pool.iloc[idx_samples[best]]
             chosen.update(sample.word)
@@ -173,17 +181,18 @@ def pick_stimuli() -> list[str]:
             random.shuffle(final)
             return final
 
-        step = round(step + 0.1, 9)                          # évite les flottants
+        step = round(step + 0.1, 9)  # évite les flottants
 
     st.error("Impossible de constituer 80 mots uniques même après élargissement ± 2.")
     st.stop()
 
+
 STIMULI: list[str] = pick_stimuli()
 
 # ─────────────────────── 4. PROTOCOLE VISUEL (STREAMLIT) ───────────────────── #
-CYCLE_MS = 350   # durée totale mot + masque
-START_MS = 14    # premier affichage du mot (ms)
-STEP_MS  = 14    # incrément (ms)
+CYCLE_MS = 350  # durée totale mot + masque
+START_MS = 14  # premier affichage du mot (ms)
+STEP_MS = 14  # incrément (ms)
 
 if "page" not in st.session_state:
     st.session_state.page = "intro"
@@ -193,7 +202,8 @@ if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués (CSV décimal « . »)")
     if st.button("Démarrer l’expérience"):
         st.session_state.page = "exp"
-        st.experimental_rerun()
+        # Avec Streamlit ≥1.25
+        st.rerun()
 
 # --------------------------------- expérience -------------------------------- #
 else:
