@@ -9,34 +9,30 @@ Sortie           : results.csv (séparateur « ; », décimale « . »)
 """
 from __future__ import annotations
 
-# ────────────────────────────── IMPORTS ─────────────────────────────────── #
-import json, random, threading
+# ───────────────────────────── IMPORTS ───────────────────────────────────── #
+import json, random, threading, queue
 from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ───────────────────────── 0. CONFIG STREAMLIT ──────────────────────────── #
+# ─────────────────────── CONFIGURATION STREAMLIT ─────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown(
-    """
+st.markdown("""
     <style>
         #MainMenu, header, footer {visibility: hidden;}
         .css-1d391kg {display: none;}   /* ancien spinner Streamlit */
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+    </style>""", unsafe_allow_html=True)
 
 # =============================================================================
-# 1. PARAMÈTRES
+# 1.  PARAMÈTRES
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
-MEAN_DELTA   = {"letters": 0.65, "phons": 0.65}
-SD_MULTIPLIER = {
-    "letters": 2.00, "phons": 2.00,
-    "old20": 0.25, "pld20": 0.25, "freq": 1.80,
-}
+MEAN_DELTA         = {"letters": 0.65, "phons": 0.65}
+SD_MULTIPLIER      = {"letters": 2.00, "phons": 2.00,
+                      "old20": 0.25, "pld20": 0.25, "freq": 1.80}
+
 XLSX            = Path(__file__).with_name("Lexique.xlsx")
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 N_PER_FEUIL_TAG = 5
@@ -44,11 +40,11 @@ MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
 rng             = random.Random()
 
-NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS  = ["PAIN", "EAU"]
+NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS = ["PAIN", "EAU"]          # mots d’entraînement
 
 # =============================================================================
-# 2. OUTILS
+# 2.  OUTILS DE BASE
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -65,7 +61,7 @@ def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3. CHARGEMENT DU CLASSEUR  (cache partagé, fait dans le thread principal)
+# 3.  CHARGEMENT DU CLASSEUR  (cache global, exécuté dans le thread principal)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
@@ -100,7 +96,7 @@ def load_sheets() -> dict[str, dict]:
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
 
-        stats = {f"m_{c}": df[c].mean() for c in ("old20", "pld20", "nblettres", "nbphons")}
+        stats = {f"m_{c}": df[c].mean()  for c in ("old20", "pld20", "nblettres", "nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
                   ("old20", "pld20", "nblettres", "nbphons") + tuple(freq_cols)}
 
@@ -109,14 +105,13 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
-
-# Charge les feuilles UNE fois dans le thread principal
+# Charge les feuilles au premier passage (thread principal)
 if "sheets" not in st.session_state:
     st.session_state.sheets = load_sheets()
 
-# -----------------------------------------------------------------------------
-# 4. TIRAGE DES 80 MOTS  (pur Python : aucune fonction Streamlit)
-# -----------------------------------------------------------------------------
+# =============================================================================
+# 4.  ALGORITHME DE TIRAGE (aucune fonction Streamlit)
+# =============================================================================
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
         "LOW_OLD" : df.old20 <  st_["m_old20"] - st_["sd_old20"],
@@ -190,44 +185,54 @@ def build_sheet(FEUILLES) -> pd.DataFrame:
 
         if ok:
             df = pd.concat(groups, ignore_index=True)
-            order = ["ortho"] + NUM_BASE + all_freq_cols + \
-                    ["source", "group", "old_cat", "pld_cat"]
+            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group",
+                                                            "old_cat", "pld_cat"]
             return df[order]
 
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
-
 # =============================================================================
-# 5. TIRAGE EN TÂCHE DE FOND  (aucune fonction Streamlit)
+# 5.  THREAD DE FOND (aucun appel Streamlit) + COMMUNICATION PAR QUEUE
 # =============================================================================
-def _async_build():
+def _worker(q: queue.Queue, sheets):
     try:
-        sheets = st.session_state.sheets     # récupère les feuilles pré-chargées
         df = build_sheet(sheets)
         words = df["ortho"].tolist()
         random.shuffle(words)
-        # dépôt du résultat dans la session
-        st.session_state.tirage_df    = df
-        st.session_state.stimuli      = words
-        st.session_state.tirage_ready = True
+        q.put(("OK", df, words))
     except Exception as e:
-        st.session_state.tirage_error = str(e)
-        st.session_state.tirage_ready = False
+        q.put(("ERR", str(e)))
 
-if "tirage_ready" not in st.session_state:
-    st.session_state.tirage_ready = False
-    st.session_state.tirage_error = None
-    threading.Thread(target=_async_build, daemon=True).start()
+if "tirage_status" not in st.session_state:
+    st.session_state.tirage_status = "building"   # building | ready | error
+    st.session_state.bg_q = queue.Queue(maxsize=1)
+    threading.Thread(target=_worker,
+                     args=(st.session_state.bg_q, st.session_state.sheets),
+                     daemon=True).start()
 
+# À chaque rerun on regarde si le thread a terminé
+if st.session_state.tirage_status == "building":
+    try:
+        msg = st.session_state.bg_q.get_nowait()
+        if msg[0] == "OK":
+            _, df, words = msg
+            st.session_state.tirage_df = df
+            st.session_state.stimuli   = words
+            st.session_state.tirage_status = "ready"
+        else:
+            st.session_state.tirage_error = msg[1]
+            st.session_state.tirage_status = "error"
+    except queue.Empty:
+        pass
 
 # =============================================================================
-# 6. GÉNÉRATION DU HTML (accolades doublées uniquement où c’est nécessaire)
+# 6.  FONCTION HTML (mots visibles 250 ms lors de la 1re boucle d’entraînement)
 # =============================================================================
 def experiment_html(words: list[str],
                     with_download: bool,
+                    start_ms: int,
                     cycle_ms: int = 350,
-                    start_ms: int = 14,
-                    step_ms:  int = 14) -> str:
+                    step_ms : int = 14) -> str:
 
     end_msg = "Merci !" if with_download else "Fin de l’entraînement"
 
@@ -276,13 +281,13 @@ const ans = document.getElementById('ans');
 function nextTrial() {{
     if (trial >= WORDS.length) {{ endExperiment(); return; }}
 
-    const w = WORDS[trial];
-    const mask = '#'.repeat(w.length);
+    const w   = WORDS[trial];
+    const mask= '#'.repeat(w.length);
 
     let showDur = START;
     let hideDur = CYCLE - showDur;
     let tShow, tHide;
-    const t0 = performance.now();
+    const t0   = performance.now();
     let active = true;
 
     (function loop() {{
@@ -294,7 +299,7 @@ function nextTrial() {{
             tHide = setTimeout(() => {{
                 if (active) {{
                     showDur += STEP;
-                    hideDur = Math.max(0, CYCLE - showDur);
+                    hideDur  = Math.max(0, CYCLE - showDur);
                     loop();
                 }}
             }}, hideDur);
@@ -344,65 +349,60 @@ nextTrial();
 """
 
 # =============================================================================
-# 7. NAVIGATION (intro → fam → exp)
+# 7.  NAVIGATION
 # =============================================================================
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-# ---- intro --------------------------------------------------------------- #
+# ---- INTRO ----------------------------------------------------------------- #
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués")
     st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
                 "avec deux mots, puis le test principal (80 mots).")
-    if st.session_state.tirage_error:
+    if st.session_state.get("tirage_error"):
         st.error(st.session_state.tirage_error)
 
     if st.button("Commencer la familiarisation"):
         st.session_state.page = "fam"
         st.rerun()
 
-# ---- familiarisation ------------------------------------------------------ #
+# ---- FAMILIARISATION ------------------------------------------------------- #
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **Espace** quand le mot apparaît, "
                 "puis tapez ce que vous avez lu et validez avec **Entrée**.")
     components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False),
+        experiment_html(PRACTICE_WORDS, with_download=False, start_ms=250),
         height=650, scrolling=False
     )
 
     st.divider()
-    ready = st.session_state.tirage_ready
-    if ready:
+    status = st.session_state.tirage_status
+    if status == "ready":
         if st.button("Passer au test principal"):
             st.session_state.page = "exp"
             st.rerun()
-    else:
+    elif status == "building":
         st.button("Passer au test principal", disabled=True)
-        st.markdown(
-            """
-            <div style="display:flex;align-items:center;margin-top:6px;">
-              <div style="
-                 border:6px solid #f3f3f3;
-                 border-top:6px solid #3498db;
-                 border-radius:50%;
-                 width:22px;height:22px;
-                 animation:spin 1s linear infinite;"></div>
-              <span style="margin-left:10px;">
-                En attente du tirage au sort de 80 mots…
-              </span>
-            </div>
-            <style>
-              @keyframes spin {0% {transform:rotate(0deg);}
-                               100%{transform:rotate(360deg);}}
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
+        st.markdown("""
+        <div style="display:flex;align-items:center;margin-top:6px;">
+          <div style="border:6px solid #f3f3f3;border-top:6px solid #3498db;
+                      border-radius:50%;width:22px;height:22px;
+                      animation:spin 1s linear infinite;"></div>
+          <span style="margin-left:10px;">
+            En attente du tirage au sort de 80 mots…
+          </span>
+        </div>
+        <style>@keyframes spin{0%{transform:rotate(0deg);}
+                               100%{transform:rotate(360deg);}}</style>
+        """, unsafe_allow_html=True)
+    else:   # status == "error"
+        st.button("Passer au test principal", disabled=True)
+        st.error(st.session_state.tirage_error)
 
-# ---- test principal ------------------------------------------------------- #
+# ---- TEST PRINCIPAL -------------------------------------------------------- #
 elif st.session_state.page == "exp":
-    if not st.session_state.tirage_ready:
+    if st.session_state.tirage_status != "ready":
         st.warning("Les mots ne sont pas encore prêts. "
                    "Merci de patienter quelques instants…")
         st.stop()
@@ -415,6 +415,6 @@ elif st.session_state.page == "exp":
         st.dataframe(tirage_df.head())
 
     components.v1.html(
-        experiment_html(stimuli, with_download=True),
+        experiment_html(stimuli, with_download=True, start_ms=14),
         height=650, scrolling=False
     )
