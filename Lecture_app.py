@@ -4,17 +4,18 @@ EXPÉRIENCE 3
 • Familiarisation : 2 mots fixes (PAIN, EAU)
 • Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD/PLD)
 Le tirage est lancé en tâche de fond pendant la familiarisation.
-Résultats      : results.csv  (séparateur “;”, décimale “.”)
-Fichier requis : Lexique.xlsx (Feuil1 … Feuil4)
+Fichier requis   : Lexique.xlsx (Feuil1 … Feuil4)
+Sortie           : results.csv (séparateur « ; », décimale « . »)
 """
-from __future__ import annotations
 
-# ─────────────────────────────── IMPORTS ─────────────────────────────────── #
+from __future__ import annotations
 import json, random, threading
 from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from streamlit import components
+
 
 # ───────────────────────── 0. CONFIG STREAMLIT ───────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -28,8 +29,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # =============================================================================
-# 1.  PARAMÈTRES GÉNÉRAUX
+# 1.  PARAMÈTRES
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
 MEAN_DELTA   = {"letters": 0.65, "phons": 0.65}
@@ -44,8 +46,9 @@ MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
 rng             = random.Random()
 
-NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS = ["PAIN", "EAU"]              # Familiarisation
+NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS  = ["PAIN", "EAU"]
+
 
 # =============================================================================
 # 2.  OUTILS
@@ -66,8 +69,9 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
+
 # =============================================================================
-# 3.  CHARGEMENT DU CLASSEUR (cache partagé)
+# 3.  CHARGEMENT DU CLASSEUR  (cache partagé)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
@@ -108,8 +112,9 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
+
 # =============================================================================
-# 4.  TIRAGE DES 80 MOTS
+# 4.  TIRAGE DES 80 MOTS  (aucune fonction Streamlit → thread sûr)
 # =============================================================================
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
@@ -146,7 +151,6 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
         samp = pool.sample(N_PER_FEUIL_TAG,
                            random_state=rng.randint(0, 1_000_000)).copy()
 
-        # distance OLD/PLD suffisante
         if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
@@ -163,7 +167,6 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
     return None
 
 def build_sheet() -> pd.DataFrame:
-    """Retourne un DataFrame de 80 mots répondant à toutes les contraintes."""
     FEUILLES = load_sheets()
     all_freq_cols = FEUILLES["all_freq_cols"]
 
@@ -193,6 +196,7 @@ def build_sheet() -> pd.DataFrame:
 
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
+
 # =============================================================================
 # 5.  TIRAGE EN TÂCHE DE FOND
 # =============================================================================
@@ -213,8 +217,9 @@ if "tirage_ready" not in st.session_state:
     st.session_state.tirage_error = None
     threading.Thread(target=_async_build, daemon=True).start()
 
+
 # =============================================================================
-# 6.  GÉNÉRATION DU HTML (toutes les accolades doublées)
+# 6.  GENERATION DU HTML – accolades correctement doublées
 # =============================================================================
 def experiment_html(words: list[str],
                     with_download: bool,
@@ -228,33 +233,33 @@ def experiment_html(words: list[str],
     if with_download:
         download_js = """
     const csv = ["word;rt_ms;response",
-                 ...results.map(r => `${{r.word}};${{r.rt_ms}};${{r.response}}`)]
+                 ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)]
                 .join("\\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], {{type: "text/csv"}}));
-    a.download = "results.csv";
-    a.textContent = "Télécharger les résultats";
-    a.style.fontSize = "32px";
-    a.style.marginTop = "30px";
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+    a.download = 'results.csv';
+    a.textContent = 'Télécharger les résultats';
+    a.style.fontSize = '32px';
+    a.style.marginTop = '30px';
     document.body.appendChild(a);
-        """
+    """
 
-    html = f"""
+    return f"""
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"/>
 <style>
-html,body{{{{height:100%;margin:0;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-family:'Courier New',monospace;}}}}
-#scr{{{{font-size:60px;user-select:none;}}}}
-#ans{{{{display:none;font-size:48px;width:60%;text-align:center;}}}}
+html,body{{height:100%;margin:0;display:flex;flex-direction:column;
+align-items:center;justify-content:center;font-family:'Courier New',monospace;}}
+#scr{{font-size:60px;user-select:none;}}
+#ans{{display:none;font-size:48px;width:60%;text-align:center;}}
 </style>
 </head>
 <body tabindex="0">
 <div id="scr"></div>
 <input id="ans" autocomplete="off"/>
 <script>
-window.addEventListener("load",() => document.body.focus());
+window.addEventListener('load', () => document.body.focus());
 
 const WORDS = {json.dumps(words)};
 const CYCLE = {cycle_ms};
@@ -263,13 +268,17 @@ const STEP  = {step_ms};
 
 let trial = 0;
 let results = [];
-const scr = document.getElementById("scr");
-const ans = document.getElementById("ans");
+const scr = document.getElementById('scr');
+const ans = document.getElementById('ans');
 
-function nextTrial() {{{{
-    if (trial >= WORDS.length) {{{{ endExperiment(); return; }}}}
+function nextTrial() {{
+    if (trial >= WORDS.length) {{
+        endExperiment();
+        return;
+    }}
+
     const w = WORDS[trial];
-    const mask = "#".repeat(w.length);
+    const mask = '#'.repeat(w.length);
 
     let showDur = START;
     let hideDur = CYCLE - showDur;
@@ -277,72 +286,73 @@ function nextTrial() {{{{
     const t0 = performance.now();
     let active = true;
 
-    (function loop() {{{{
+    (function loop() {{
         if (!active) return;
 
         scr.textContent = w;
-        tShow = setTimeout(() => {{{{
+        tShow = setTimeout(() => {{
             if (!active) return;
 
             scr.textContent = mask;
-            tHide = setTimeout(() => {{{{
-                if (active) {{{{
+            tHide = setTimeout(() => {{
+                if (active) {{
                     showDur += STEP;
                     hideDur = Math.max(0, CYCLE - showDur);
                     loop();
-                }}}}
-            }}}}, hideDur);
-        }}}}, showDur);
-    }}}})();
+                }}
+            }}, hideDur);
+        }}, showDur);
+    }})();
 
-    function onSpace(e) {{{{
-        if (e.code === "Space" && active) {{{{
+    function onSpace(e) {{
+        if (e.code === 'Space' && active) {{
             active = false;
             clearTimeout(tShow);
             clearTimeout(tHide);
 
             const rt = Math.round(performance.now() - t0);
-            window.removeEventListener("keydown", onSpace);
+            window.removeEventListener('keydown', onSpace);
 
-            scr.textContent = "";
-            ans.style.display = "block";
-            ans.value = "";
+            scr.textContent = '';
+            ans.style.display = 'block';
+            ans.value = '';
             ans.focus();
 
-            function onEnter(ev) {{{{
-                if (ev.key === "Enter") {{{{
+            function onEnter(ev) {{
+                if (ev.key === 'Enter') {{
                     ev.preventDefault();
-                    results.push({{{{word: w, rt_ms: rt, response: ans.value.trim()}}}});
-                    ans.removeEventListener("keydown", onEnter);
-                    ans.style.display = "none";
+                    results.push({{word: w, rt_ms: rt, response: ans.value.trim()}});
+                    ans.removeEventListener('keydown', onEnter);
+                    ans.style.display = 'none';
                     trial += 1;
                     nextTrial();
-                }}}}
-            }}}}
-            ans.addEventListener("keydown", onEnter, {{{{once: true}}}});
-        }}}}
-    }}}}
-    window.addEventListener("keydown", onSpace);
-}}}}
+                }}
+            }}
+            ans.addEventListener('keydown', onEnter);
+        }}
+    }}
+    window.addEventListener('keydown', onSpace);
+}}
 
-function endExperiment() {{{{
-    scr.style.fontSize = "40px";
-    scr.textContent = "{end_msg}";
+function endExperiment() {{
+    scr.style.fontSize = '40px';
+    scr.textContent = '{end_msg}';
     {download_js}
-}}}}
+}}
 
 nextTrial();
 </script>
 </body>
 </html>
 """
-    return html
+
 
 # =============================================================================
-# 7.  NAVIGATION (intro → fam → exp)
+# 7.  NAVIGATION
 # =============================================================================
 if "page" not in st.session_state:
     st.session_state.page = "intro"
+
 
 # ───────────────────────── PAGE INTRO ───────────────────────────────────── #
 if st.session_state.page == "intro":
@@ -354,6 +364,7 @@ if st.session_state.page == "intro":
     if st.button("Commencer la familiarisation"):
         st.session_state.page = "fam"
         st.rerun()
+
 
 # ───────────────────── PAGE FAMILIARISATION ─────────────────────────────── #
 elif st.session_state.page == "fam":
@@ -372,7 +383,6 @@ elif st.session_state.page == "fam":
             st.session_state.page = "exp"
             st.rerun()
     else:
-        # bouton désactivé + roue qui tourne
         st.button("Passer au test principal", disabled=True)
         st.markdown(
             """
@@ -388,12 +398,13 @@ elif st.session_state.page == "fam":
               </span>
             </div>
             <style>
-              @keyframes spin {0% {transform: rotate(0deg);}
-                               100% {transform: rotate(360deg);}}
+              @keyframes spin {0% {transform:rotate(0deg);}
+                               100%{transform:rotate(360deg);}}
             </style>
             """,
             unsafe_allow_html=True
         )
+
 
 # ───────────────────────── PAGE TEST ───────────────────────────────────── #
 elif st.session_state.page == "exp":
