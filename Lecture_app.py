@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-EXPERIENCE 3 – tirage des 80 mots en arrière-plan (thread + add_script_run_ctx)
-Compatible Streamlit >= 1.32 (st.rerun)
+EXPÉRIENCE 3 – tirage des 80 mots en arrière-plan (thread + add_script_run_ctx)
+Compatible Streamlit ≥ 1.32 (st.rerun)
 """
 from __future__ import annotations
-import json, random, threading, time
+import json, random, threading
 from pathlib import Path
 
 import pandas as pd
@@ -13,18 +13,18 @@ from streamlit import components
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 
-# ────────────────────── utilitaire rerun (toutes versions) ───────────────── #
+# ────────────────────────── utilitaire « rerun » ───────────────────────── #
 _rerun = st.rerun if hasattr(st, "rerun") else st.experimental_rerun
 
 
-# ───────────────────────────── PARAMÈTRES ──────────────────────────────── #
+# ─────────────────────────── PARAMÈTRES GÉNÉRAUX ───────────────────────── #
 XLSX            = Path(__file__).with_name("Lexique.xlsx")
 PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 MEAN_FACTOR_OLDPLD = 0.40
 MEAN_DELTA         = {"letters": 0.65, "phons": 0.65}
-SD_MULTIPLIER      = {"letters": 2.0, "phons": 2.0, "old20": 0.25,
-                      "pld20": 0.25, "freq":   1.8}
+SD_MULTIPLIER      = {"letters": 2.0, "phons": 2.0,
+                      "old20": 0.25, "pld20": 0.25, "freq": 1.8}
 
 N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
@@ -35,17 +35,14 @@ rng             = random.Random()
 NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 
 
-# ──────────────────────── CONFIG STREAMLIT ─────────────────────────────── #
+# ─────────────────────────── CONFIG STREAMLIT ──────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown(
-    """
-    <style>
-      #MainMenu, header, footer {visibility: hidden;}
-      .css-1d391kg{display:none;}          /* ancien spinner Streamlit */
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+ #MainMenu, header, footer {visibility: hidden;}
+ .css-1d391kg{display:none;}          /* ancien spinner Streamlit */
+</style>
+""", unsafe_allow_html=True)
 
 
 # ─────────────────────────────  OUTILS  ────────────────────────────────── #
@@ -65,7 +62,7 @@ def cat_code(tag: str) -> int:      # −1 (LOW) / +1 (HIGH)
     return -1 if "LOW" in tag else 1
 
 
-# ─────────────────── CHARGEMENT DU CLASSEUR (cache) ────────────────────── #
+# ──────────────── 1. LECTURE DU CLASSEUR (cache) ───────────────────────── #
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
@@ -84,7 +81,7 @@ def load_sheets() -> dict[str, dict]:
         freq_cols = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(freq_cols)
 
-        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
+        need = ["ortho","old20","pld20","nblettres","nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {sh}"); st.stop()
 
@@ -104,7 +101,7 @@ def load_sheets() -> dict[str, dict]:
     return feuilles
 
 
-# ───────────────────────── TIRAGE DES 80 MOTS ──────────────────────────── #
+# ──────────────── 2.  TIRAGE DES 80 MOTS ──────────────────────────────── #
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {"LOW_OLD":  df.old20 < st_["m_old20"] - st_["sd_old20"],
             "HIGH_OLD": df.old20 > st_["m_old20"] + st_["sd_old20"],
@@ -159,7 +156,7 @@ def build_sheet() -> pd.DataFrame:
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
 
-# ──────────────── TIRAGE EN ARRIÈRE-PLAN (THREAD) ──────────────────────── #
+# ─────────────── 3.  THREAD DE TIRAGE (arrière-plan) ───────────────────── #
 def launch_thread():
     def worker():
         try:
@@ -171,10 +168,10 @@ def launch_thread():
             lst = df.ortho.tolist(); random.shuffle(lst)
             st.session_state.stimuli = lst
         st.session_state.tirage_done = True
-        _rerun()
+        _rerun()                       # un seul rerun quand tout est prêt
 
     th = threading.Thread(target=worker, daemon=True)
-    add_script_run_ctx(th)     # indispensable
+    add_script_run_ctx(th)
     th.start()
     st.session_state.tirage_thread = th
 
@@ -184,22 +181,19 @@ if "tirage_done" not in st.session_state:
     launch_thread()
 
 
-# ─────────────────────── TEMPLATE HTML / JS ───────────────────────────── #
-_HTML_TEMPLATE = r"""
+# ─────────────── 4.  TEMPLATE HTML / JS (chaîne brute) ─────────────────── #
+_HTML = r"""
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8" />
 <style>
-html,body{
-  height:100%;margin:0;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;font-family:'Courier New',monospace}
+html,body{height:100%;margin:0;display:flex;flex-direction:column;
+align-items:center;justify-content:center;font-family:'Courier New',monospace}
 #scr{font-size:60px;user-select:none}
 #ans{display:none;font-size:48px;width:60%;text-align:center}
 </style>
 </head>
-<body tabindex="0">
-<div id="scr"></div>
-<input id="ans" autocomplete="off"/>
+<body tabindex="0"><div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 const WORDS = __WORDS__;
 const CYCLE = __CYCLE__;
@@ -213,15 +207,11 @@ const scr = document.getElementById("scr");
 const ans = document.getElementById("ans");
 
 function nextTrial(){
-  if(trial >= WORDS.length){
-    endExperiment(); return;
-  }
-  const w = WORDS[trial];
-  const mask = "#".repeat(w.length);
+  if(trial >= WORDS.length){endExperiment();return;}
+  const w   = WORDS[trial];
+  const mask= "#".repeat(w.length);
 
-  let showDur = START,
-      hideDur = CYCLE - showDur,
-      tShow, tHide;
+  let showDur=START, hideDur=CYCLE-showDur, tShow,tHide;
   const t0 = performance.now();
   let active = true;
 
@@ -231,55 +221,46 @@ function nextTrial(){
     tShow = setTimeout(()=>{
       if(!active) return;
       scr.textContent = mask;
-      tHide = setTimeout(()=>{
-        if(active){
-          showDur += STEP;
-          hideDur  = Math.max(0, CYCLE - showDur);
-          loop();
-        }
-      }, hideDur);
-    }, showDur);
+      tHide=setTimeout(()=>{
+        if(active){showDur+=STEP;hideDur=Math.max(0,CYCLE-showDur);loop();}
+      },hideDur);
+    },showDur);
   })();
 
   function onSpace(e){
-    if(e.code === "Space" && active){
-      active = false;
-      clearTimeout(tShow); clearTimeout(tHide);
-      const rt = Math.round(performance.now() - t0);
-      window.removeEventListener("keydown", onSpace);
-      scr.textContent = "";
-      ans.style.display="block"; ans.value=""; ans.focus();
+    if(e.code==="Space" && active){
+      active=false;clearTimeout(tShow);clearTimeout(tHide);
+      const rt=Math.round(performance.now()-t0);
+      window.removeEventListener("keydown",onSpace);
+      scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
 
       function onEnter(ev){
-        if(ev.key === "Enter"){
+        if(ev.key==="Enter"){
           ev.preventDefault();
           results.push({word:w, rt_ms:rt, response:ans.value.trim()});
-          ans.removeEventListener("keydown", onEnter);
-          ans.style.display="none";
-          trial += 1; nextTrial();
+          ans.removeEventListener("keydown",onEnter);
+          ans.style.display="none";trial+=1;nextTrial();
         }
       }
-      ans.addEventListener("keydown", onEnter);
+      ans.addEventListener("keydown",onEnter);
     }
   }
-  window.addEventListener("keydown", onSpace);
+  window.addEventListener("keydown",onSpace);
 }
 
 function endExperiment(){
   scr.style.fontSize="40px";
   scr.textContent = WITH_DOWNLOAD ? "Merci !" : "Fin de l’entraînement";
   if(!WITH_DOWNLOAD) return;
-
   const csv = ["word;rt_ms;response",
                ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv"}));
-  a.download = "results.csv";
-  a.textContent = "Télécharger les résultats";
-  a.style.fontSize = "32px"; a.style.marginTop = "30px";
+  a.download="results.csv";
+  a.textContent="Télécharger les résultats";
+  a.style.fontSize="32px";a.style.marginTop="30px";
   document.body.appendChild(a);
 }
-
 nextTrial();
 </script>
 </body>
@@ -288,61 +269,60 @@ nextTrial();
 
 def make_html(words:list[str], *, with_download=True,
               cycle_ms=350, start_ms=14, step_ms=14) -> str:
-    html = (_HTML_TEMPLATE
+    return (_HTML
             .replace("__WORDS__", json.dumps(words))
             .replace("__CYCLE__", str(cycle_ms))
             .replace("__START__", str(start_ms))
             .replace("__STEP__",  str(step_ms))
             .replace("__DL__", "true" if with_download else "false"))
-    return html
 
 
-# ─────────────────────────── NAVIGATION UI ────────────────────────────── #
+# ─────────────── 5.  NAVIGATION STREAMLIT ─────────────────────────────── #
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-
-# ─ intro ─
+# ─ intro ────────────────────────────────────────────────────────────────
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués")
     st.markdown("Cette expérience comporte d’abord **une courte familiarisation** puis le test principal.")
     if st.button("Commencer la familiarisation"):
         st.session_state.page = "fam"; _rerun()
 
-# ─ familiarisation ─
+# ─ familiarisation ──────────────────────────────────────────────────────
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **Espace** dès que vous voyez apparaître le mot, "
                 "puis tapez ce que vous avez lu et validez avec **Entrée**.")
 
-    info = st.empty()
     if st.session_state.tirage_done:
         if st.session_state.tirage_error:
-            info.error(f"Erreur lors du tirage : {st.session_state.tirage_error}")
+            st.error(f"Erreur lors du tirage : {st.session_state.tirage_error}")
         else:
-            info.success("Stimuli du test prêts !")
+            st.success("Stimuli du test prêts !")
     else:
-        info.info("Préparation des stimuli du test en arrière-plan…")
+        st.info("Préparation des stimuli du test en arrière-plan…")
 
     components.v1.html(make_html(PRACTICE_WORDS, with_download=False),
                        height=650, scrolling=False)
 
     st.divider()
-    if st.button("Passer au test principal"):
-        st.session_state.page = "exp"; _rerun()
+    st.button(
+        "Passer au test principal",
+        disabled=not st.session_state.tirage_done,
+        on_click=lambda: (st.session_state.update({"page":"exp"}), _rerun())
+    )
 
-# ─ test principal ─
+# ─ test principal ───────────────────────────────────────────────────────
 else:   # page == "exp"
-    st.header("Test principal (80 mots)")
-
     if not st.session_state.tirage_done:
-        st.warning("Les stimuli sont encore en cours de génération… Merci de patienter.")
-        time.sleep(1); _rerun()
+        st.warning("Les stimuli ne sont pas encore prêts…")
+        st.stop()
 
     if st.session_state.tirage_error:
         st.error(f"Impossible de poursuivre : {st.session_state.tirage_error}")
         st.stop()
 
+    st.header("Test principal (80 mots)")
     tirage_df = st.session_state.tirage_df
     STIMULI   = st.session_state.stimuli
 
