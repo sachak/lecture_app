@@ -73,10 +73,14 @@ def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3.  LECTURE DU CLASSEUR + CONSTRUCTION DES 80 MOTS (fonctions @cache_data)
+# 3.  LECTURE DU CLASSEUR + CONSTRUCTION DES 80 MOTS
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
+    """
+    Chargement de Lexique.xlsx. Cette opération est mise en cache car elle est
+    indépendante de chaque utilisateur et peut être longue.
+    """
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable.")
         st.stop()
@@ -118,37 +122,37 @@ def load_sheets() -> dict[str, dict]:
     return feuilles
 
 
-def masks(df: pd.DataFrame, st: dict) -> dict[str, pd.Series]:
+def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
-        "LOW_OLD" : df.old20 <  st["m_old20"] - st["sd_old20"],
-        "HIGH_OLD": df.old20 >  st["m_old20"] + st["sd_old20"],
-        "LOW_PLD" : df.pld20 <  st["m_pld20"] - st["sd_pld20"],
-        "HIGH_PLD": df.pld20 >  st["m_pld20"] + st["sd_pld20"],
+        "LOW_OLD" : df.old20 <  st_["m_old20"] - st_["sd_old20"],
+        "HIGH_OLD": df.old20 >  st_["m_old20"] + st_["sd_old20"],
+        "LOW_PLD" : df.pld20 <  st_["m_pld20"] - st_["sd_pld20"],
+        "HIGH_PLD": df.pld20 >  st_["m_pld20"] + st_["sd_pld20"],
     }
 
 
-def sd_ok(sub: pd.DataFrame, st: dict, fq_cols: list[str]) -> bool:
+def sd_ok(sub: pd.DataFrame, st_: dict, fq_cols: list[str]) -> bool:
     return (
-        sub.nblettres.std(ddof=0) <= st["sd_nblettres"] * SD_MULTIPLIER["letters"] and
-        sub.nbphons.std(ddof=0)   <= st["sd_nbphons"]   * SD_MULTIPLIER["phons"]   and
-        sub.old20.std(ddof=0)     <= st["sd_old20"]     * SD_MULTIPLIER["old20"]   and
-        sub.pld20.std(ddof=0)     <= st["sd_pld20"]     * SD_MULTIPLIER["pld20"]   and
-        all(sub[c].std(ddof=0) <= st[f"sd_{c}"] * SD_MULTIPLIER["freq"] for c in fq_cols)
+        sub.nblettres.std(ddof=0) <= st_["sd_nblettres"] * SD_MULTIPLIER["letters"] and
+        sub.nbphons.std(ddof=0)   <= st_["sd_nbphons"]   * SD_MULTIPLIER["phons"]   and
+        sub.old20.std(ddof=0)     <= st_["sd_old20"]     * SD_MULTIPLIER["old20"]   and
+        sub.pld20.std(ddof=0)     <= st_["sd_pld20"]     * SD_MULTIPLIER["pld20"]   and
+        all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULTIPLIER["freq"] for c in fq_cols)
     )
 
 
-def mean_lp_ok(sub: pd.DataFrame, st: dict) -> bool:
+def mean_lp_ok(sub: pd.DataFrame, st_: dict) -> bool:
     return (
-        abs(sub.nblettres.mean() - st["m_nblettres"]) <= MEAN_DELTA["letters"] * st["sd_nblettres"] and
-        abs(sub.nbphons.mean()   - st["m_nbphons"])   <= MEAN_DELTA["phons"]   * st["sd_nbphons"]
+        abs(sub.nblettres.mean() - st_["m_nblettres"]) <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
+        abs(sub.nbphons.mean()   - st_["m_nbphons"])   <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
     )
 
 
 def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
     df   = FEUILLES[feuille]["df"]
-    st   = FEUILLES[feuille]["stats"]
+    st_  = FEUILLES[feuille]["stats"]
     fqs  = FEUILLES[feuille]["freq_cols"]
-    pool = df.loc[masks(df, st)[tag] & ~df.ortho.isin(used)]
+    pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
         return None
 
@@ -157,14 +161,14 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
                            random_state=rng.randint(0, 1_000_000)).copy()
 
         # distance OLD/PLD suffisante
-        if tag == "LOW_OLD"  and samp.old20.mean() >= st["m_old20"] - MEAN_FACTOR_OLDPLD*st["sd_old20"]:  continue
-        if tag == "HIGH_OLD" and samp.old20.mean() <= st["m_old20"] + MEAN_FACTOR_OLDPLD*st["sd_old20"]:  continue
-        if tag == "LOW_PLD"  and samp.pld20.mean() >= st["m_pld20"] - MEAN_FACTOR_OLDPLD*st["sd_pld20"]:  continue
-        if tag == "HIGH_PLD" and samp.pld20.mean() <= st["m_pld20"] + MEAN_FACTOR_OLDPLD*st["sd_pld20"]:  continue
+        if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
+        if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
+        if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
+        if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
 
-        if not mean_lp_ok(samp, st):
+        if not mean_lp_ok(samp, st_):
             continue
-        if sd_ok(samp, st, fqs):
+        if sd_ok(samp, st_, fqs):
             samp["source"]  = feuille
             samp["group"]   = tag
             samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
@@ -173,10 +177,15 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
     return None
 
 
-@st.cache_data(show_spinner="Tirage aléatoire des 80 mots…")
 def build_sheet() -> pd.DataFrame:
+    """
+    Génère une liste de 80 mots respectant toutes les contraintes.
+    Pas de décorateur @st.cache_data : on veut un nouveau tirage pour chaque
+    utilisateur (session Streamlit).
+    """
     FEUILLES = load_sheets()
     all_freq_cols = FEUILLES["all_freq_cols"]
+
     for _ in range(MAX_TRY_FULL):
         taken  = {sh: set() for sh in FEUILLES if sh != "all_freq_cols"}
         groups = []
@@ -205,11 +214,17 @@ def build_sheet() -> pd.DataFrame:
 
 
 # =============================================================================
-# 4.  LISTE DES STIMULI PRÊTE POUR L’EXPÉRIMENTATION
+# 4.  LISTE DES STIMULI (générée une fois par SESSION)
 # =============================================================================
-tirage_df = build_sheet()
-STIMULI   = tirage_df["ortho"].tolist()
-random.shuffle(STIMULI)          # ordre expérimental aléatoire
+if "tirage_df" not in st.session_state:
+    with st.spinner("Tirage aléatoire des 80 mots…"):
+        st.session_state.tirage_df = build_sheet()
+        mots = st.session_state.tirage_df["ortho"].tolist()
+        random.shuffle(mots)                    # ordre expérimental aléatoire
+        st.session_state.stimuli = mots
+
+tirage_df = st.session_state.tirage_df
+STIMULI   = st.session_state.stimuli
 
 # =============================================================================
 # 5.  PARTIE VISUELLE : IDENTIQUE À L’ANCIEN SCRIPT
