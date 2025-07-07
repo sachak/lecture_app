@@ -1,32 +1,32 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3
-• Familiarisation : 2 mots fixes (PAIN, EAU)
-• Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD/PLD)
-Le tirage s’effectue en tâche de fond pendant la familiarisation.
-Fichier requis   : Lexique.xlsx (Feuil1 … Feuil4)
-Sortie           : results.csv (séparateur « ; », décimale « . »)
+• Familiarisation : 2 mots (PAIN, EAU)
+• Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD / PLD)
+
+Le tirage est lancé en tâche de fond dès l’ouverture.
+Fichier requis : Lexique.xlsx (Feuil1 … Feuil4)
+Sortie         : results.csv (séparateur « ; », décimale « . »)
 """
 from __future__ import annotations
-
-# ───────────────────────────── IMPORTS ───────────────────────────────────── #
-import json, random, threading, queue
+import json, random, threading
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ─────────────────────── CONFIGURATION STREAMLIT ─────────────────────────── #
+# ───────────────────────── CONFIG STREAMLIT ─────────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
-    <style>
-        #MainMenu, header, footer {visibility: hidden;}
-        .css-1d391kg {display: none;}   /* ancien spinner Streamlit */
-    </style>""", unsafe_allow_html=True)
+<style>
+#MainMenu, header, footer {visibility: hidden;}
+.css-1d391kg {display: none;}          /* ancien spinner Streamlit */
+</style>
+""", unsafe_allow_html=True)
 
 # =============================================================================
-# 1.  PARAMÈTRES
+# 1. PARAMÈTRES
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
 MEAN_DELTA         = {"letters": 0.65, "phons": 0.65}
@@ -40,11 +40,11 @@ MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
 rng             = random.Random()
 
-NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS = ["PAIN", "EAU"]          # mots d’entraînement
+NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 # =============================================================================
-# 2.  OUTILS DE BASE
+# 2. OUTILS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -55,13 +55,14 @@ def to_float(s: pd.Series) -> pd.Series:
         errors="coerce")
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
-    return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
+    return df.sample(frac=1,
+                     random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
 def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3.  CHARGEMENT DU CLASSEUR  (cache global, exécuté dans le thread principal)
+# 3.  CHARGEMENT DE L’EXCEL (cache global)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
@@ -105,12 +106,12 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
-# Charge les feuilles au premier passage (thread principal)
+# Feuilles chargées une fois
 if "sheets" not in st.session_state:
     st.session_state.sheets = load_sheets()
 
 # =============================================================================
-# 4.  ALGORITHME DE TIRAGE (aucune fonction Streamlit)
+# 4.  TIRAGE DES 80 MOTS  (aucun appel Streamlit)
 # =============================================================================
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
@@ -192,41 +193,29 @@ def build_sheet(FEUILLES) -> pd.DataFrame:
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
 # =============================================================================
-# 5.  THREAD DE FOND (aucun appel Streamlit) + COMMUNICATION PAR QUEUE
+# 5. THREAD DE FOND : écrit directement dans session_state
 # =============================================================================
-def _worker(q: queue.Queue, sheets):
+def _async_build():
     try:
+        sheets = st.session_state.sheets
         df = build_sheet(sheets)
         words = df["ortho"].tolist()
         random.shuffle(words)
-        q.put(("OK", df, words))
+
+        st.session_state.tirage_df    = df
+        st.session_state.stimuli      = words
+        st.session_state.tirage_ready = True
     except Exception as e:
-        q.put(("ERR", str(e)))
+        st.session_state.tirage_error = str(e)
+        st.session_state.tirage_ready = False
 
-if "tirage_status" not in st.session_state:
-    st.session_state.tirage_status = "building"   # building | ready | error
-    st.session_state.bg_q = queue.Queue(maxsize=1)
-    threading.Thread(target=_worker,
-                     args=(st.session_state.bg_q, st.session_state.sheets),
-                     daemon=True).start()
-
-# À chaque rerun on regarde si le thread a terminé
-if st.session_state.tirage_status == "building":
-    try:
-        msg = st.session_state.bg_q.get_nowait()
-        if msg[0] == "OK":
-            _, df, words = msg
-            st.session_state.tirage_df = df
-            st.session_state.stimuli   = words
-            st.session_state.tirage_status = "ready"
-        else:
-            st.session_state.tirage_error = msg[1]
-            st.session_state.tirage_status = "error"
-    except queue.Empty:
-        pass
+if "tirage_ready" not in st.session_state:
+    st.session_state.tirage_ready = False
+    st.session_state.tirage_error = None
+    threading.Thread(target=_async_build, daemon=True).start()
 
 # =============================================================================
-# 6.  FONCTION HTML (mots visibles 250 ms lors de la 1re boucle d’entraînement)
+# 6.  GENERATION DU HTML
 # =============================================================================
 def experiment_html(words: list[str],
                     with_download: bool,
@@ -354,19 +343,19 @@ nextTrial();
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-# ---- INTRO ----------------------------------------------------------------- #
+# ---- INTRO ---------------------------------------------------------------- #
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués")
     st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
                 "avec deux mots, puis le test principal (80 mots).")
-    if st.session_state.get("tirage_error"):
+    if st.session_state.tirage_error:
         st.error(st.session_state.tirage_error)
 
     if st.button("Commencer la familiarisation"):
         st.session_state.page = "fam"
         st.rerun()
 
-# ---- FAMILIARISATION ------------------------------------------------------- #
+# ---- FAMILIARISATION ------------------------------------------------------ #
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **Espace** quand le mot apparaît, "
@@ -377,12 +366,11 @@ elif st.session_state.page == "fam":
     )
 
     st.divider()
-    status = st.session_state.tirage_status
-    if status == "ready":
+    if st.session_state.tirage_ready:
         if st.button("Passer au test principal"):
             st.session_state.page = "exp"
             st.rerun()
-    elif status == "building":
+    else:
         st.button("Passer au test principal", disabled=True)
         st.markdown("""
         <div style="display:flex;align-items:center;margin-top:6px;">
@@ -396,13 +384,10 @@ elif st.session_state.page == "fam":
         <style>@keyframes spin{0%{transform:rotate(0deg);}
                                100%{transform:rotate(360deg);}}</style>
         """, unsafe_allow_html=True)
-    else:   # status == "error"
-        st.button("Passer au test principal", disabled=True)
-        st.error(st.session_state.tirage_error)
 
-# ---- TEST PRINCIPAL -------------------------------------------------------- #
+# ---- TEST PRINCIPAL ------------------------------------------------------- #
 elif st.session_state.page == "exp":
-    if st.session_state.tirage_status != "ready":
+    if not st.session_state.tirage_ready:
         st.warning("Les mots ne sont pas encore prêts. "
                    "Merci de patienter quelques instants…")
         st.stop()
