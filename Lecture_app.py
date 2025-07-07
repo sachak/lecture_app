@@ -35,14 +35,14 @@ st.markdown(
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
 
-MEAN_DELTA = {"letters": 0.65, "phons": 0.65}
+MEAN_DELTA = {"letters": 0.7, "phons": 0.7}
 
 SD_MULTIPLIER = {
     "letters": 2.00,
     "phons"  : 2.00,
     "old20"  : 0.25,
     "pld20"  : 0.25,
-    "freq"   : 1.80,
+    "freq"   : 2.00,
 }
 
 XLSX     = Path(__file__).with_name("Lexique.xlsx")
