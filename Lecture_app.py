@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3
-• Familiarisation : 2 mots (PAIN, EAU)
-• Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD / PLD)
-
+• Familiarisation : 2 mots fixes (PAIN, EAU)
+• Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD/PLD)
 Le tirage est lancé en tâche de fond dès l’ouverture.
 Fichier requis : Lexique.xlsx (Feuil1 … Feuil4)
 Sortie         : results.csv (séparateur « ; », décimale « . »)
 """
 from __future__ import annotations
-import json, random, threading
+import json, random, threading, queue
 from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 from streamlit import components
@@ -21,9 +19,8 @@ st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility: hidden;}
-.css-1d391kg {display: none;}          /* ancien spinner Streamlit */
-</style>
-""", unsafe_allow_html=True)
+.css-1d391kg {display: none;}
+</style>""", unsafe_allow_html=True)
 
 # =============================================================================
 # 1. PARAMÈTRES
@@ -67,14 +64,12 @@ def cat_code(tag: str) -> int:
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
-        st.error(f"Fichier « {XLSX.name} » introuvable.")
-        st.stop()
+        st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
 
     xls = pd.ExcelFile(XLSX)
     sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheet_names) != 4:
-        st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4.")
-        st.stop()
+        st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
 
     feuilles: dict[str, dict] = {}
     all_freq_cols: set[str] = set()
@@ -82,14 +77,12 @@ def load_sheets() -> dict[str, dict]:
     for sh in sheet_names:
         df = xls.parse(sh)
         df.columns = df.columns.str.strip().str.lower()
-
         freq_cols = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(freq_cols)
 
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
-            st.error(f"Colonnes manquantes dans {sh}")
-            st.stop()
+            st.error(f"Colonnes manquantes dans {sh}"); st.stop()
 
         for col in NUM_BASE + freq_cols:
             df[col] = to_float(df[col])
@@ -106,12 +99,11 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
-# Feuilles chargées une fois
 if "sheets" not in st.session_state:
     st.session_state.sheets = load_sheets()
 
 # =============================================================================
-# 4.  TIRAGE DES 80 MOTS  (aucun appel Streamlit)
+# 4.  ALGORITHME DE TIRAGE (aucune fonction Streamlit)
 # =============================================================================
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
@@ -137,269 +129,166 @@ def mean_lp_ok(sub: pd.DataFrame, st_: dict) -> bool:
     )
 
 def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
-    df   = FEUILLES[feuille]["df"]
-    st_  = FEUILLES[feuille]["stats"]
-    fqs  = FEUILLES[feuille]["freq_cols"]
+    df, st_, fqs = FEUILLES[feuille]["df"], FEUILLES[feuille]["stats"], FEUILLES[feuille]["freq_cols"]
     pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
         return None
-
     for _ in range(MAX_TRY_TAG):
-        samp = pool.sample(N_PER_FEUIL_TAG,
-                           random_state=rng.randint(0, 1_000_000)).copy()
-
+        samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0, 1_000_000)).copy()
         if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
         if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
-
-        if not mean_lp_ok(samp, st_):
-            continue
-        if sd_ok(samp, st_, fqs):
-            samp["source"]  = feuille
-            samp["group"]   = tag
-            samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
-            samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
-            return samp
+        if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fqs):  continue
+        samp["source"], samp["group"] = feuille, tag
+        samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
+        samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
+        return samp
     return None
 
 def build_sheet(FEUILLES) -> pd.DataFrame:
     all_freq_cols = FEUILLES["all_freq_cols"]
-
     for _ in range(MAX_TRY_FULL):
-        taken  = {sh: set() for sh in FEUILLES if sh != "all_freq_cols"}
-        groups = []
-        ok = True
-
+        taken = {sh:set() for sh in FEUILLES if sh != "all_freq_cols"}
+        groups, ok = [], True
         for tag in TAGS:
-            parts = []
+            parts=[]
             for sh in taken:
                 sub = pick_five(tag, sh, taken[sh], FEUILLES)
-                if sub is None:
-                    ok = False
-                    break
-                parts.append(sub)
-                taken[sh].update(sub.ortho)
-            if not ok:
-                break
+                if sub is None: ok=False; break
+                parts.append(sub); taken[sh].update(sub.ortho)
+            if not ok: break
             groups.append(shuffled(pd.concat(parts, ignore_index=True)))
-
         if ok:
             df = pd.concat(groups, ignore_index=True)
-            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group",
-                                                            "old_cat", "pld_cat"]
+            order = ["ortho"]+NUM_BASE+all_freq_cols+["source","group","old_cat","pld_cat"]
             return df[order]
-
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
 # =============================================================================
-# 5. THREAD DE FOND : écrit directement dans session_state
+# 5.  THREAD DE FOND + QUEUE
 # =============================================================================
-def _async_build():
+def _worker(q: queue.Queue, sheets):
     try:
-        sheets = st.session_state.sheets
         df = build_sheet(sheets)
-        words = df["ortho"].tolist()
-        random.shuffle(words)
-
-        st.session_state.tirage_df    = df
-        st.session_state.stimuli      = words
-        st.session_state.tirage_ready = True
+        words = df["ortho"].tolist(); random.shuffle(words)
+        q.put(("OK", df, words))
     except Exception as e:
-        st.session_state.tirage_error = str(e)
-        st.session_state.tirage_ready = False
+        q.put(("ERR", str(e)))
 
-if "tirage_ready" not in st.session_state:
-    st.session_state.tirage_ready = False
-    st.session_state.tirage_error = None
-    threading.Thread(target=_async_build, daemon=True).start()
+if "tirage_status" not in st.session_state:
+    st.session_state.tirage_status = "building"   # building | ready | error
+    st.session_state.bg_q = queue.Queue(maxsize=1)
+    threading.Thread(target=_worker,
+                     args=(st.session_state.bg_q, st.session_state.sheets),
+                     daemon=True).start()
+
+#  → lecture de la queue (thread principal)
+if st.session_state.tirage_status == "building":
+    try:
+        msg = st.session_state.bg_q.get_nowait()
+        if msg[0] == "OK":
+            _, df, words = msg
+            st.session_state.tirage_df = df
+            st.session_state.stimuli   = words
+            st.session_state.tirage_status = "ready"
+        else:
+            st.session_state.tirage_error = msg[1]
+            st.session_state.tirage_status = "error"
+        st.experimental_rerun()          # rafraîchit immédiatement la page
+    except queue.Empty:
+        pass
 
 # =============================================================================
-# 6.  GENERATION DU HTML
+# 6.  FONCTION HTML (identique)
 # =============================================================================
-def experiment_html(words: list[str],
-                    with_download: bool,
-                    start_ms: int,
-                    cycle_ms: int = 350,
-                    step_ms : int = 14) -> str:
-
-    end_msg = "Merci !" if with_download else "Fin de l’entraînement"
-
-    download_js = ""
+def experiment_html(words, with_download, start_ms, cycle_ms=350, step_ms=14):
+    end_msg="Merci !" if with_download else "Fin de l’entraînement"
+    download_js=""
     if with_download:
-        download_js = """
-    const csv = ["word;rt_ms;response",
-                 ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)]
-                .join("\\n");
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
-    a.download = 'results.csv';
-    a.textContent = 'Télécharger les résultats';
-    a.style.fontSize = '32px';
-    a.style.marginTop = '30px';
+        download_js="""
+    const csv=["word;rt_ms;response",...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\\n");
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download='results.csv';
+    a.textContent='Télécharger les résultats';
+    a.style.fontSize='32px';a.style.marginTop='30px';
     document.body.appendChild(a);
     """
-
-    return f"""
-<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="utf-8"/>
+    return f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
 html,body{{height:100%;margin:0;display:flex;flex-direction:column;
 align-items:center;justify-content:center;font-family:'Courier New',monospace;}}
 #scr{{font-size:60px;user-select:none;}}
 #ans{{display:none;font-size:48px;width:60%;text-align:center;}}
-</style>
-</head>
-<body tabindex="0">
-<div id="scr"></div>
-<input id="ans" autocomplete="off"/>
+</style></head><body tabindex="0">
+<div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
-window.addEventListener('load', ()=>document.body.focus());
-
-const WORDS = {json.dumps(words)};
-const CYCLE = {cycle_ms};
-const START = {start_ms};
-const STEP  = {step_ms};
-
-let trial = 0;
-let results = [];
-const scr = document.getElementById('scr');
-const ans = document.getElementById('ans');
-
-function nextTrial() {{
-    if (trial >= WORDS.length) {{ endExperiment(); return; }}
-
-    const w   = WORDS[trial];
-    const mask= '#'.repeat(w.length);
-
-    let showDur = START;
-    let hideDur = CYCLE - showDur;
-    let tShow, tHide;
-    const t0   = performance.now();
-    let active = true;
-
-    (function loop() {{
-        if (!active) return;
-        scr.textContent = w;
-        tShow = setTimeout(() => {{
-            if (!active) return;
-            scr.textContent = mask;
-            tHide = setTimeout(() => {{
-                if (active) {{
-                    showDur += STEP;
-                    hideDur  = Math.max(0, CYCLE - showDur);
-                    loop();
-                }}
-            }}, hideDur);
-        }}, showDur);
-    }})();
-
-    function onSpace(e) {{
-        if (e.code === 'Space' && active) {{
-            active = false;
-            clearTimeout(tShow);
-            clearTimeout(tHide);
-
-            const rt = Math.round(performance.now() - t0);
-            window.removeEventListener('keydown', onSpace);
-
-            scr.textContent = '';
-            ans.style.display = 'block';
-            ans.value = '';
-            ans.focus();
-
-            function onEnter(ev) {{
-                if (ev.key === 'Enter') {{
-                    ev.preventDefault();
-                    results.push({{word: w, rt_ms: rt, response: ans.value.trim()}});
-                    ans.removeEventListener('keydown', onEnter);
-                    ans.style.display = 'none';
-                    trial += 1;
-                    nextTrial();
-                }}
-            }}
-            ans.addEventListener('keydown', onEnter);
-        }}
-    }}
-    window.addEventListener('keydown', onSpace);
-}}
-
-function endExperiment() {{
-    scr.style.fontSize = '40px';
-    scr.textContent = '{end_msg}';
-    {download_js}
-}}
-
-nextTrial();
-</script>
-</body>
-</html>
-"""
+window.addEventListener('load',()=>document.body.focus());
+const WORDS={json.dumps(words)},CYCLE={cycle_ms},START={start_ms},STEP={step_ms};
+let i=0,res=[],scr=document.getElementById('scr'),ans=document.getElementById('ans');
+function next(){{if(i>=WORDS.length){{fin();return;}}
+  const w=WORDS[i],mask='#'.repeat(w.length);let sd=START,hd=CYCLE-sd,ts,th,t0=performance.now(),act=!0;
+  (function loop(){{if(!act)return;scr.textContent=w;
+    ts=setTimeout(()=>{{if(!act)return;scr.textContent=mask;
+      th=setTimeout(()=>{{if(act){{sd+=STEP;hd=Math.max(0,CYCLE-sd);loop();}}}},hd);
+    }},sd);}})();
+  function onSpace(e){{if(e.code==='Space'&&act){{act=!1;clearTimeout(ts);clearTimeout(th);
+    const rt=Math.round(performance.now()-t0);
+    window.removeEventListener('keydown',onSpace);
+    scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
+    ans.addEventListener('keydown',function onEnter(ev){{if(ev.key==='Enter'){{ev.preventDefault();
+      res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
+      ans.removeEventListener('keydown',onEnter);ans.style.display='none';i++;next();}}}});
+  }}}}window.addEventListener('keydown',onSpace);}}
+function fin(){{scr.style.fontSize='40px';scr.textContent='{end_msg}';{download_js}}next();
+</script></body></html>"""
 
 # =============================================================================
 # 7.  NAVIGATION
 # =============================================================================
 if "page" not in st.session_state:
-    st.session_state.page = "intro"
+    st.session_state.page="intro"
 
 # ---- INTRO ---------------------------------------------------------------- #
-if st.session_state.page == "intro":
+if st.session_state.page=="intro":
     st.title("EXPERIENCE 3 – mots masqués")
-    st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
-                "avec deux mots, puis le test principal (80 mots).")
-    if st.session_state.tirage_error:
-        st.error(st.session_state.tirage_error)
-
+    st.markdown("Cette expérience comporte d’abord **une courte familiarisation** avec deux mots, puis le test principal (80 mots).")
+    if st.session_state.get("tirage_error"): st.error(st.session_state.tirage_error)
     if st.button("Commencer la familiarisation"):
-        st.session_state.page = "fam"
-        st.rerun()
+        st.session_state.page="fam"; st.rerun()
 
 # ---- FAMILIARISATION ------------------------------------------------------ #
-elif st.session_state.page == "fam":
+elif st.session_state.page=="fam":
     st.header("Familiarisation (2 mots)")
-    st.markdown("Appuyez sur **Espace** quand le mot apparaît, "
-                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
-    components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False, start_ms=250),
-        height=650, scrolling=False
-    )
+    st.markdown("Appuyez sur **Espace** quand le mot apparaît, puis tapez ce que vous avez lu et validez avec **Entrée**.")
+    components.v1.html(experiment_html(PRACTICE_WORDS,False,250),height=650,scrolling=False)
 
     st.divider()
-    if st.session_state.tirage_ready:
+    status=st.session_state.tirage_status
+    if status=="ready":
         if st.button("Passer au test principal"):
-            st.session_state.page = "exp"
-            st.rerun()
-    else:
-        st.button("Passer au test principal", disabled=True)
+            st.session_state.page="exp"; st.rerun()
+    elif status=="building":
+        st.button("Passer au test principal",disabled=True)
         st.markdown("""
         <div style="display:flex;align-items:center;margin-top:6px;">
           <div style="border:6px solid #f3f3f3;border-top:6px solid #3498db;
                       border-radius:50%;width:22px;height:22px;
                       animation:spin 1s linear infinite;"></div>
-          <span style="margin-left:10px;">
-            En attente du tirage au sort de 80 mots…
-          </span>
+          <span style="margin-left:10px;">En attente du tirage au sort de 80 mots…</span>
         </div>
-        <style>@keyframes spin{0%{transform:rotate(0deg);}
-                               100%{transform:rotate(360deg);}}</style>
-        """, unsafe_allow_html=True)
+        <style>@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>
+        """,unsafe_allow_html=True)
+    else:  # error
+        st.error(st.session_state.tirage_error)
+        st.button("Passer au test principal",disabled=True)
 
 # ---- TEST PRINCIPAL ------------------------------------------------------- #
-elif st.session_state.page == "exp":
-    if not st.session_state.tirage_ready:
-        st.warning("Les mots ne sont pas encore prêts. "
-                   "Merci de patienter quelques instants…")
-        st.stop()
-
-    tirage_df = st.session_state.tirage_df
-    stimuli   = st.session_state.stimuli
-
+elif st.session_state.page=="exp":
+    if st.session_state.tirage_status!="ready":
+        st.warning("Les mots ne sont pas encore prêts. Merci de patienter…"); st.stop()
+    tirage_df, stimuli = st.session_state.tirage_df, st.session_state.stimuli
     st.header("Test principal (80 mots)")
-    with st.expander("Statistiques du tirage (aperçu)"):
-        st.dataframe(tirage_df.head())
-
-    components.v1.html(
-        experiment_html(stimuli, with_download=True, start_ms=14),
-        height=650, scrolling=False
-    )
+    with st.expander("Statistiques du tirage (aperçu)"): st.dataframe(tirage_df.head())
+    components.v1.html(experiment_html(stimuli,True,14),height=650,scrolling=False)
