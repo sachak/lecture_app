@@ -1,58 +1,54 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – version « tirage » 4 × 20 mots (5 par feuille × 4 feuilles).
+EXPÉRIENCE 3
+• Familiarisation : 2 mots fixes (PAIN, EAU)
+• Test            : 4 × 20 mots (5 par feuille × 4 feuilles, tirage contraint)
 
-• Fichier attendu : Lexique.xlsx (4 feuilles Feuil1…Feuil4)
-• Résultat        : experience.csv (séparateur “;”, décimale “.”)
+Fichier requis : Lexique.xlsx (Feuil1…Feuil4)
+Sortie         : results.csv  (séparateur “;”, décimale “.”)
 
-Lancer :  streamlit run exp3.py
+Exécution : streamlit run exp3.py
 """
 from __future__ import annotations
 
-# ─────────────────────────────── IMPORTS ───────────────────────────────────── #
-import json, random, sys, time
+# ───────────────────────────── IMPORTS ────────────────────────────────────── #
+import json, random
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ───────────────────────── 0. CONFIG STREAMLIT ────────────────────────────── #
+# ───────────────────────── 0. CONFIG STREAMLIT ───────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown(
     """
     <style>
         #MainMenu, header, footer {visibility: hidden;}
-        .css-1d391kg {display: none;}
+        .css-1d391kg {display: none;}  /* ancien spinner Streamlit */
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # =============================================================================
-# 1.  PARAMÈTRES DU TIRAGE (repris de build_stimuli_tirage.py)
+# 1.  PARAMÈTRES DU TIRAGE
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
-
-MEAN_DELTA = {"letters": 0.65, "phons": 0.65}
-
+MEAN_DELTA   = {"letters": 0.65, "phons": 0.65}
 SD_MULTIPLIER = {
-    "letters": 2.00,
-    "phons"  : 2.00,
-    "old20"  : 0.25,
-    "pld20"  : 0.25,
-    "freq"   : 1.80,
+    "letters": 2.00, "phons": 2.00, "old20": 0.25,
+    "pld20": 0.25,  "freq": 1.80,
 }
-
-XLSX     = Path(__file__).with_name("Lexique.xlsx")
+XLSX            = Path(__file__).with_name("Lexique.xlsx")
 N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
-rng = random.Random()         # rng.seed(123)  # (optionnel)
+rng             = random.Random()     # rng.seed(123)  # (optionnel)
 
 NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS = ["PAIN", "EAU"]      # phase de familiarisation (2 mots)
 
 # =============================================================================
 # 2.  OUTILS
@@ -73,14 +69,10 @@ def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3.  LECTURE DU CLASSEUR + CONSTRUCTION DES 80 MOTS
+# 3.  CHARGEMENT D’EXCEL (cache GLOBAL) + TIRAGE DES 80 MOTS (par SESSION)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
-    """
-    Chargement de Lexique.xlsx. Cette opération est mise en cache car elle est
-    indépendante de chaque utilisateur et peut être longue.
-    """
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable.")
         st.stop()
@@ -130,7 +122,6 @@ def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
         "HIGH_PLD": df.pld20 >  st_["m_pld20"] + st_["sd_pld20"],
     }
 
-
 def sd_ok(sub: pd.DataFrame, st_: dict, fq_cols: list[str]) -> bool:
     return (
         sub.nblettres.std(ddof=0) <= st_["sd_nblettres"] * SD_MULTIPLIER["letters"] and
@@ -140,13 +131,11 @@ def sd_ok(sub: pd.DataFrame, st_: dict, fq_cols: list[str]) -> bool:
         all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULTIPLIER["freq"] for c in fq_cols)
     )
 
-
 def mean_lp_ok(sub: pd.DataFrame, st_: dict) -> bool:
     return (
         abs(sub.nblettres.mean() - st_["m_nblettres"]) <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
         abs(sub.nbphons.mean()   - st_["m_nbphons"])   <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
     )
-
 
 def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
     df   = FEUILLES[feuille]["df"]
@@ -176,13 +165,8 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
             return samp
     return None
 
-
 def build_sheet() -> pd.DataFrame:
-    """
-    Génère une liste de 80 mots respectant toutes les contraintes.
-    Pas de décorateur @st.cache_data : on veut un nouveau tirage pour chaque
-    utilisateur (session Streamlit).
-    """
+    """Génère la liste de 80 mots – un nouveau tirage à chaque session."""
     FEUILLES = load_sheets()
     all_freq_cols = FEUILLES["all_freq_cols"]
 
@@ -206,47 +190,42 @@ def build_sheet() -> pd.DataFrame:
 
         if ok:
             df = pd.concat(groups, ignore_index=True)
-            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group", "old_cat", "pld_cat"]
+            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group",
+                                                            "old_cat", "pld_cat"]
             return df[order]
 
     st.error("Impossible de générer la liste (contraintes trop strictes).")
     st.stop()
 
-
 # =============================================================================
-# 4.  LISTE DES STIMULI (générée une fois par SESSION)
+# 4.  FONCTION HTML COMMUNE (pratique / test)
 # =============================================================================
-if "tirage_df" not in st.session_state:
-    with st.spinner("Tirage aléatoire des 80 mots…"):
-        st.session_state.tirage_df = build_sheet()
-        mots = st.session_state.tirage_df["ortho"].tolist()
-        random.shuffle(mots)                    # ordre expérimental aléatoire
-        st.session_state.stimuli = mots
+def experiment_html(words: list[str],
+                    with_download: bool = True,
+                    cycle_ms: int = 350,
+                    start_ms: int = 14,
+                    step_ms:  int = 14) -> str:
+    """
+    Génère la page HTML/JS autonome affichée via components.v1.html.
+    Si with_download=False, pas de fichier CSV en fin d’expérience.
+    """
+    download_js = ""
+    end_message = "Merci !" if with_download else "Fin de l’entraînement"
 
-tirage_df = st.session_state.tirage_df
-STIMULI   = st.session_state.stimuli
+    if with_download:
+        download_js = """
+    const csv = ["word;rt_ms;response",
+                 ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)]
+                .join("\\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
+    a.download = "results.csv";
+    a.textContent = "Télécharger les résultats";
+    a.style.fontSize = "32px";
+    a.style.marginTop = "30px";
+    document.body.appendChild(a);
+        """
 
-# =============================================================================
-# 5.  PARTIE VISUELLE : IDENTIQUE À L’ANCIEN SCRIPT
-# =============================================================================
-CYCLE_MS = 350
-START_MS = 14
-STEP_MS  = 14
-
-if "page" not in st.session_state:
-    st.session_state.page = "intro"
-
-# ----------------------------- page intro ----------------------------------- #
-if st.session_state.page == "intro":
-    st.title("EXPERIENCE 3 – mots masqués (tirage contraint)")
-    with st.expander("Statistiques du tirage (aperçu)"):
-        st.dataframe(tirage_df.head())
-    if st.button("Démarrer l’expérience"):
-        st.session_state.page = "exp"
-        st.rerun()
-
-# ----------------------------- expérience ----------------------------------- #
-else:
     html = f"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -279,10 +258,10 @@ html,body {{
 <script>
 window.addEventListener("load", () => document.body.focus());
 
-const WORDS = {json.dumps(STIMULI)};
-const CYCLE = {CYCLE_MS};
-const START = {START_MS};
-const STEP  = {STEP_MS};
+const WORDS = {json.dumps(words)};
+const CYCLE = {cycle_ms};
+const START = {start_ms};
+const STEP  = {step_ms};
 
 let trial = 0;
 let results = [];
@@ -359,20 +338,8 @@ function nextTrial() {{
 
 function endExperiment() {{
     scr.style.fontSize = "40px";
-    scr.textContent = "Merci !";
-
-    const csv = [
-        "word;rt_ms;response",
-        ...results.map(r => `${{r.word}};${{r.rt_ms}};${{r.response}}`)
-    ].join("\\n");
-
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], {{type: "text/csv"}}));
-    a.download = "results.csv";
-    a.textContent = "Télécharger les résultats";
-    a.style.fontSize = "32px";
-    a.style.marginTop = "30px";
-    document.body.appendChild(a);
+    scr.textContent = "{end_message}";
+    {download_js}
 }}
 
 nextTrial();
@@ -380,4 +347,57 @@ nextTrial();
 </body>
 </html>
 """
-    components.v1.html(html, height=650, scrolling=False)
+    return html
+
+
+# =============================================================================
+# 5.  GÉNÉRATION DES STIMULI (test principal) – une fois par SESSION
+# =============================================================================
+if "tirage_df" not in st.session_state:
+    with st.spinner("Tirage aléatoire des 80 mots…"):
+        st.session_state.tirage_df = build_sheet()
+        mots = st.session_state.tirage_df["ortho"].tolist()
+        random.shuffle(mots)
+        st.session_state.stimuli = mots
+
+tirage_df = st.session_state.tirage_df
+STIMULI   = st.session_state.stimuli
+
+# =============================================================================
+# 6.  GESTION DE LA NAVIGATION
+# =============================================================================
+if "page" not in st.session_state:
+    st.session_state.page = "intro"
+
+# ─────────────────────── PAGE INTRO ───────────────────────────────────────── #
+if st.session_state.page == "intro":
+    st.title("EXPERIENCE 3 – mots masqués")
+    st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
+                "puis le test principal.")
+    if st.button("Commencer la familiarisation"):
+        st.session_state.page = "fam"
+        st.rerun()
+
+# ──────────────────── PAGE FAMILIARISATION ───────────────────────────────── #
+elif st.session_state.page == "fam":
+    st.header("Familiarisation (2 mots)")
+    st.markdown("Appuyez sur **Espace** dès que vous voyez apparaître le mot, "
+                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
+    components.v1.html(
+        experiment_html(PRACTICE_WORDS, with_download=False),
+        height=650, scrolling=False
+    )
+    st.divider()
+    if st.button("Passer au test principal"):
+        st.session_state.page = "exp"
+        st.rerun()
+
+# ───────────────────── PAGE TEST PRINCIPAL ───────────────────────────────── #
+else:
+    st.header("Test principal (80 mots)")
+    with st.expander("Statistiques du tirage (aperçu)"):
+        st.dataframe(tirage_df.head())
+    components.v1.html(
+        experiment_html(STIMULI, with_download=True),
+        height=650, scrolling=False
+    )
