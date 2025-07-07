@@ -3,21 +3,20 @@
 EXPÉRIENCE 3
 • Familiarisation : 2 mots fixes (PAIN, EAU)
 • Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD/PLD)
-Le tirage est lancé en tâche de fond pendant la familiarisation.
+Le tirage s’effectue en tâche de fond pendant la familiarisation.
 Fichier requis   : Lexique.xlsx (Feuil1 … Feuil4)
 Sortie           : results.csv (séparateur « ; », décimale « . »)
 """
-
 from __future__ import annotations
+
+# ────────────────────────────── IMPORTS ─────────────────────────────────── #
 import json, random, threading
 from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 from streamlit import components
 
-
-# ───────────────────────── 0. CONFIG STREAMLIT ───────────────────────────── #
+# ───────────────────────── 0. CONFIG STREAMLIT ──────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown(
     """
@@ -29,19 +28,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 # =============================================================================
-# 1.  PARAMÈTRES
+# 1. PARAMÈTRES
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
 MEAN_DELTA   = {"letters": 0.65, "phons": 0.65}
 SD_MULTIPLIER = {
-    "letters": 2.00, "phons": 2.00, "old20": 0.25,
-    "pld20": 0.25,  "freq": 1.80,
+    "letters": 2.00, "phons": 2.00,
+    "old20": 0.25, "pld20": 0.25, "freq": 1.80,
 }
 XLSX            = Path(__file__).with_name("Lexique.xlsx")
-N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
+N_PER_FEUIL_TAG = 5
 MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
 rng             = random.Random()
@@ -49,9 +47,8 @@ rng             = random.Random()
 NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS  = ["PAIN", "EAU"]
 
-
 # =============================================================================
-# 2.  OUTILS
+# 2. OUTILS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -59,29 +56,28 @@ def to_float(s: pd.Series) -> pd.Series:
          .str.replace(" ",  "", regex=False)
          .str.replace("\xa0","", regex=False)
          .str.replace(",", ".", regex=False),
-        errors="coerce"
-    )
+        errors="coerce")
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
-    return df.sample(frac=1,
-                     random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
+    return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
 def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
-
 # =============================================================================
-# 3.  CHARGEMENT DU CLASSEUR  (cache partagé)
+# 3. CHARGEMENT DU CLASSEUR  (cache partagé, fait dans le thread principal)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
-        raise FileNotFoundError(f"Fichier « {XLSX.name} » introuvable.")
+        st.error(f"Fichier « {XLSX.name} » introuvable.")
+        st.stop()
 
     xls = pd.ExcelFile(XLSX)
     sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheet_names) != 4:
-        raise RuntimeError("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4.")
+        st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4.")
+        st.stop()
 
     feuilles: dict[str, dict] = {}
     all_freq_cols: set[str] = set()
@@ -95,7 +91,8 @@ def load_sheets() -> dict[str, dict]:
 
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
-            raise RuntimeError(f"Colonnes manquantes dans {sh}")
+            st.error(f"Colonnes manquantes dans {sh}")
+            st.stop()
 
         for col in NUM_BASE + freq_cols:
             df[col] = to_float(df[col])
@@ -103,7 +100,7 @@ def load_sheets() -> dict[str, dict]:
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
 
-        stats = {f"m_{c}": df[c].mean()  for c in ("old20", "pld20", "nblettres", "nbphons")}
+        stats = {f"m_{c}": df[c].mean() for c in ("old20", "pld20", "nblettres", "nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
                   ("old20", "pld20", "nblettres", "nbphons") + tuple(freq_cols)}
 
@@ -113,9 +110,13 @@ def load_sheets() -> dict[str, dict]:
     return feuilles
 
 
-# =============================================================================
-# 4.  TIRAGE DES 80 MOTS  (aucune fonction Streamlit → thread sûr)
-# =============================================================================
+# Charge les feuilles UNE fois dans le thread principal
+if "sheets" not in st.session_state:
+    st.session_state.sheets = load_sheets()
+
+# -----------------------------------------------------------------------------
+# 4. TIRAGE DES 80 MOTS  (pur Python : aucune fonction Streamlit)
+# -----------------------------------------------------------------------------
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
         "LOW_OLD" : df.old20 <  st_["m_old20"] - st_["sd_old20"],
@@ -166,8 +167,7 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
             return samp
     return None
 
-def build_sheet() -> pd.DataFrame:
-    FEUILLES = load_sheets()
+def build_sheet(FEUILLES) -> pd.DataFrame:
     all_freq_cols = FEUILLES["all_freq_cols"]
 
     for _ in range(MAX_TRY_FULL):
@@ -198,15 +198,17 @@ def build_sheet() -> pd.DataFrame:
 
 
 # =============================================================================
-# 5.  TIRAGE EN TÂCHE DE FOND
+# 5. TIRAGE EN TÂCHE DE FOND  (aucune fonction Streamlit)
 # =============================================================================
 def _async_build():
     try:
-        df = build_sheet()
+        sheets = st.session_state.sheets     # récupère les feuilles pré-chargées
+        df = build_sheet(sheets)
         words = df["ortho"].tolist()
         random.shuffle(words)
-        st.session_state.tirage_df   = df
-        st.session_state.stimuli     = words
+        # dépôt du résultat dans la session
+        st.session_state.tirage_df    = df
+        st.session_state.stimuli      = words
         st.session_state.tirage_ready = True
     except Exception as e:
         st.session_state.tirage_error = str(e)
@@ -219,7 +221,7 @@ if "tirage_ready" not in st.session_state:
 
 
 # =============================================================================
-# 6.  GENERATION DU HTML – accolades correctement doublées
+# 6. GÉNÉRATION DU HTML (accolades doublées uniquement où c’est nécessaire)
 # =============================================================================
 def experiment_html(words: list[str],
                     with_download: bool,
@@ -259,7 +261,7 @@ align-items:center;justify-content:center;font-family:'Courier New',monospace;}}
 <div id="scr"></div>
 <input id="ans" autocomplete="off"/>
 <script>
-window.addEventListener('load', () => document.body.focus());
+window.addEventListener('load', ()=>document.body.focus());
 
 const WORDS = {json.dumps(words)};
 const CYCLE = {cycle_ms};
@@ -272,10 +274,7 @@ const scr = document.getElementById('scr');
 const ans = document.getElementById('ans');
 
 function nextTrial() {{
-    if (trial >= WORDS.length) {{
-        endExperiment();
-        return;
-    }}
+    if (trial >= WORDS.length) {{ endExperiment(); return; }}
 
     const w = WORDS[trial];
     const mask = '#'.repeat(w.length);
@@ -288,11 +287,9 @@ function nextTrial() {{
 
     (function loop() {{
         if (!active) return;
-
         scr.textContent = w;
         tShow = setTimeout(() => {{
             if (!active) return;
-
             scr.textContent = mask;
             tHide = setTimeout(() => {{
                 if (active) {{
@@ -346,27 +343,25 @@ nextTrial();
 </html>
 """
 
-
 # =============================================================================
-# 7.  NAVIGATION
+# 7. NAVIGATION (intro → fam → exp)
 # =============================================================================
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-
-# ───────────────────────── PAGE INTRO ───────────────────────────────────── #
+# ---- intro --------------------------------------------------------------- #
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués")
     st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
                 "avec deux mots, puis le test principal (80 mots).")
     if st.session_state.tirage_error:
         st.error(st.session_state.tirage_error)
+
     if st.button("Commencer la familiarisation"):
         st.session_state.page = "fam"
         st.rerun()
 
-
-# ───────────────────── PAGE FAMILIARISATION ─────────────────────────────── #
+# ---- familiarisation ------------------------------------------------------ #
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **Espace** quand le mot apparaît, "
@@ -405,8 +400,7 @@ elif st.session_state.page == "fam":
             unsafe_allow_html=True
         )
 
-
-# ───────────────────────── PAGE TEST ───────────────────────────────────── #
+# ---- test principal ------------------------------------------------------- #
 elif st.session_state.page == "exp":
     if not st.session_state.tirage_ready:
         st.warning("Les mots ne sont pas encore prêts. "
