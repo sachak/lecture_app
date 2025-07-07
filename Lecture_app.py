@@ -3,16 +3,15 @@
 EXPÉRIENCE 3
 • Familiarisation : 2 mots fixes (PAIN, EAU)
 • Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD/PLD)
-Le tirage s’effectue en tâche de fond pendant la familiarisation.
+Le tirage est lancé en tâche de fond pendant la familiarisation.
 Résultats      : results.csv  (séparateur “;”, décimale “.”)
 Fichier requis : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
 
 # ─────────────────────────────── IMPORTS ─────────────────────────────────── #
-import json, random, threading, time
+import json, random, threading
 from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 from streamlit import components
@@ -43,7 +42,7 @@ N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
-rng             = random.Random()            # rng.seed(123)  (optionnel)
+rng             = random.Random()
 
 NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS = ["PAIN", "EAU"]              # Familiarisation
@@ -68,7 +67,7 @@ def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3.  CHARGEMENT DU CLASSEUR (mis en cache, partagé entre les sessions)
+# 3.  CHARGEMENT DU CLASSEUR (cache partagé)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
@@ -110,7 +109,7 @@ def load_sheets() -> dict[str, dict]:
     return feuilles
 
 # =============================================================================
-# 4.  TIRAGE DES 80 MOTS (aucune fonction Streamlit → sûr dans un thread)
+# 4.  TIRAGE DES 80 MOTS
 # =============================================================================
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     return {
@@ -165,7 +164,7 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
 
 def build_sheet() -> pd.DataFrame:
     """Retourne un DataFrame de 80 mots répondant à toutes les contraintes."""
-    FEUILLES = load_sheets()          # cache partagé
+    FEUILLES = load_sheets()
     all_freq_cols = FEUILLES["all_freq_cols"]
 
     for _ in range(MAX_TRY_FULL):
@@ -195,10 +194,9 @@ def build_sheet() -> pd.DataFrame:
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
 # =============================================================================
-# 5.  TIRAGE EN TÂCHE DE FOND (une fois par session)
+# 5.  TIRAGE EN TÂCHE DE FOND
 # =============================================================================
 def _async_build():
-    """Thread daemon : génère le tirage et met à jour session_state."""
     try:
         df = build_sheet()
         words = df["ortho"].tolist()
@@ -210,30 +208,30 @@ def _async_build():
         st.session_state.tirage_error = str(e)
         st.session_state.tirage_ready = False
 
-# Lancement du thread à la première arrivée dans la session
 if "tirage_ready" not in st.session_state:
     st.session_state.tirage_ready = False
     st.session_state.tirage_error = None
     threading.Thread(target=_async_build, daemon=True).start()
 
 # =============================================================================
-# 6.  GÉNÉRATION DU HTML (pratique / test)
+# 6.  GÉNÉRATION DU HTML (toutes les accolades doublées)
 # =============================================================================
 def experiment_html(words: list[str],
                     with_download: bool,
                     cycle_ms: int = 350,
                     start_ms: int = 14,
                     step_ms:  int = 14) -> str:
-    """Retourne la page HTML/JS autonome affichée via components.v1.html."""
-    download_js = ""
+
     end_msg = "Merci !" if with_download else "Fin de l’entraînement"
+
+    download_js = ""
     if with_download:
         download_js = """
     const csv = ["word;rt_ms;response",
-                 ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)]
+                 ...results.map(r => `${{r.word}};${{r.rt_ms}};${{r.response}}`)]
                 .join("\\n");
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
+    a.href = URL.createObjectURL(new Blob([csv], {{type: "text/csv"}}));
     a.download = "results.csv";
     a.textContent = "Télécharger les résultats";
     a.style.fontSize = "32px";
@@ -241,36 +239,104 @@ def experiment_html(words: list[str],
     document.body.appendChild(a);
         """
 
-    return f"""
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+    html = f"""
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"/>
 <style>
-html,body{{height:100%;margin:0;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-family:'Courier New',monospace;}}
-#scr{{font-size:60px;user-select:none;}}
-#ans{{display:none;font-size:48px;width:60%;text-align:center;}}
-</style></head><body tabindex="0">
-<div id="scr"></div><input id="ans" autocomplete="off"/>
+html,body{{{{height:100%;margin:0;display:flex;flex-direction:column;
+align-items:center;justify-content:center;font-family:'Courier New',monospace;}}}}
+#scr{{{{font-size:60px;user-select:none;}}}}
+#ans{{{{display:none;font-size:48px;width:60%;text-align:center;}}}}
+</style>
+</head>
+<body tabindex="0">
+<div id="scr"></div>
+<input id="ans" autocomplete="off"/>
 <script>
-window.addEventListener("load",()=>document.body.focus());
-const WORDS={json.dumps(words)},CYCLE={cycle_ms},START={start_ms},STEP={step_ms};
-let t=0,res=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
-function next(){{if(t>=WORDS.length){{fin();return;}}
- let w=WORDS[t],mask="#".repeat(w.length),sd=START,hd=CYCLE-sd,ts,th,t0=performance.now(),act=!0;
- (function loop(){{if(!act)return;scr.textContent=w;
-  ts=setTimeout(()=>{{if(!act)return;scr.textContent=mask;
-    th=setTimeout(()=>{{if(act){{sd+=STEP;hd=Math.max(0,CYCLE-sd);loop();}}}},hd);
-  }},sd);}})();
- window.addEventListener("keydown",function sp(e){{if(e.code==="Space"&&act){{act=!1;
-   clearTimeout(ts);clearTimeout(th);let rt=Math.round(performance.now()-t0);
-   window.removeEventListener("keydown",sp);scr.textContent="";
-   ans.style.display="block";ans.value="";ans.focus();
-   ans.addEventListener("keydown",function en(ev){{if(ev.key==="Enter"){{ev.preventDefault();
-     res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
-     ans.style.display="none";ans.removeEventListener("keydown",en);t++;next();}}}},{{once:!0}});
- }} }},{{once:!0}});}}
-function fin(){{scr.style.fontSize="40px";scr.textContent="{end_msg}";{download_js}}next();
-</script></body></html>
+window.addEventListener("load",() => document.body.focus());
+
+const WORDS = {json.dumps(words)};
+const CYCLE = {cycle_ms};
+const START = {start_ms};
+const STEP  = {step_ms};
+
+let trial = 0;
+let results = [];
+const scr = document.getElementById("scr");
+const ans = document.getElementById("ans");
+
+function nextTrial() {{{{
+    if (trial >= WORDS.length) {{{{ endExperiment(); return; }}}}
+    const w = WORDS[trial];
+    const mask = "#".repeat(w.length);
+
+    let showDur = START;
+    let hideDur = CYCLE - showDur;
+    let tShow, tHide;
+    const t0 = performance.now();
+    let active = true;
+
+    (function loop() {{{{
+        if (!active) return;
+
+        scr.textContent = w;
+        tShow = setTimeout(() => {{{{
+            if (!active) return;
+
+            scr.textContent = mask;
+            tHide = setTimeout(() => {{{{
+                if (active) {{{{
+                    showDur += STEP;
+                    hideDur = Math.max(0, CYCLE - showDur);
+                    loop();
+                }}}}
+            }}}}, hideDur);
+        }}}}, showDur);
+    }}}})();
+
+    function onSpace(e) {{{{
+        if (e.code === "Space" && active) {{{{
+            active = false;
+            clearTimeout(tShow);
+            clearTimeout(tHide);
+
+            const rt = Math.round(performance.now() - t0);
+            window.removeEventListener("keydown", onSpace);
+
+            scr.textContent = "";
+            ans.style.display = "block";
+            ans.value = "";
+            ans.focus();
+
+            function onEnter(ev) {{{{
+                if (ev.key === "Enter") {{{{
+                    ev.preventDefault();
+                    results.push({{{{word: w, rt_ms: rt, response: ans.value.trim()}}}});
+                    ans.removeEventListener("keydown", onEnter);
+                    ans.style.display = "none";
+                    trial += 1;
+                    nextTrial();
+                }}}}
+            }}}}
+            ans.addEventListener("keydown", onEnter, {{{{once: true}}}});
+        }}}}
+    }}}}
+    window.addEventListener("keydown", onSpace);
+}}}}
+
+function endExperiment() {{{{
+    scr.style.fontSize = "40px";
+    scr.textContent = "{end_msg}";
+    {download_js}
+}}}}
+
+nextTrial();
+</script>
+</body>
+</html>
 """
+    return html
 
 # =============================================================================
 # 7.  NAVIGATION (intro → fam → exp)
@@ -278,7 +344,7 @@ function fin(){{scr.style.fontSize="40px";scr.textContent="{end_msg}";{download_
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-# ───────────────────────── PAGE INTRO ────────────────────────────────────── #
+# ───────────────────────── PAGE INTRO ───────────────────────────────────── #
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués")
     st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
@@ -321,13 +387,15 @@ elif st.session_state.page == "fam":
                 En attente du tirage au sort de 80 mots…
               </span>
             </div>
-            <style>@keyframes spin{0%{transform:rotate(0deg);}
-                                   100%{transform:rotate(360deg);}}</style>
+            <style>
+              @keyframes spin {0% {transform: rotate(0deg);}
+                               100% {transform: rotate(360deg);}}
+            </style>
             """,
             unsafe_allow_html=True
         )
 
-# ───────────────────────── PAGE TEST ────────────────────────────────────── #
+# ───────────────────────── PAGE TEST ───────────────────────────────────── #
 elif st.session_state.page == "exp":
     if not st.session_state.tirage_ready:
         st.warning("Les mots ne sont pas encore prêts. "
