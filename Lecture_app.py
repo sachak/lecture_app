@@ -1,30 +1,30 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – version asynchrone via concurrent.futures
-─────────────────────────────────────────────────────────
-• Familiarisation : 2 mots (PAIN, EAU)
-• Test principal  : 80 mots tirés au sort (restrictions OLD/PLD)
-Le tirage est effectué dans un thread distinct ; l’utilisateur peut
-faire la familiarisation sans attendre.
+EXPÉRIENCE 3
+• Familiarisation : 2 mots fixes (PAIN, EAU)
+• Test principal  : 80 mots tirés au sort (4 × 20, contraintes OLD/PLD)
+
+Le tirage est exécuté dans un thread via ThreadPoolExecutor.
 """
 from __future__ import annotations
-import json, random, concurrent.futures, traceback
+import json, random, concurrent.futures
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ──────────────────────────── CONFIG VISUEL ─────────────────────────────── #
+# ───────────────────────── CONFIG VISUEL ────────────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
 .css-1d391kg{display:none;}
-</style>""", unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
 # =============================================================================
-# 1. PARAMÈTRES GÉNÉRAUX
+# 1. PARAMÈTRES
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.40
 MEAN_DELTA         = {"letters": 0.65, "phons": 0.65}
@@ -42,12 +42,16 @@ NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 # =============================================================================
-# 2. OUTILS
+# 2. OUTILS DE BASE
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
-        s.astype(str).str.replace(" ","").str.replace(" ", "").str.replace(",", "."),
-        errors="coerce")
+        s.astype(str)
+         .str.replace(" ",  "", regex=False)
+         .str.replace("\xa0","", regex=False)
+         .str.replace(",", ".", regex=False),
+        errors="coerce"
+    )
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1,
@@ -57,7 +61,7 @@ def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3. CHARGEMENT DE L’EXCEL (cache global)
+# 3.  CHARGEMENT DU CLASSEUR (cache global)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
@@ -65,16 +69,19 @@ def load_sheets() -> dict[str, dict]:
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
 
     xls = pd.ExcelFile(XLSX)
-    sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
-    if len(sheets) != 4:
-        st.error("Il faut exactement 4 feuilles nommées Feuil1…Feuil4."); st.stop()
+    sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
+    if len(sheet_names) != 4:
+        st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
 
-    feuilles, all_freq = {}, set()
-    for sh in sheets:
+    feuilles: dict[str, dict] = {}
+    all_freq_cols: set[str] = set()
+
+    for sh in sheet_names:
         df = xls.parse(sh)
         df.columns = df.columns.str.strip().str.lower()
+
         freq_cols = [c for c in df.columns if c.startswith("freq")]
-        all_freq.update(freq_cols)
+        all_freq_cols.update(freq_cols)
 
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
@@ -86,17 +93,17 @@ def load_sheets() -> dict[str, dict]:
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
 
-        stats = {f"m_{c}": df[c].mean() for c in ("old20","pld20","nblettres","nbphons")}
+        stats = {f"m_{c}": df[c].mean()  for c in ("old20", "pld20", "nblettres", "nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
-                  ("old20","pld20","nblettres","nbphons") + tuple(freq_cols)}
+                  ("old20", "pld20", "nblettres", "nbphons") + tuple(freq_cols)}
 
         feuilles[sh] = {"df": df, "stats": stats, "freq_cols": freq_cols}
 
-    feuilles["all_freq_cols"] = sorted(all_freq)
+    feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
 # =============================================================================
-# 4.  ALGORITHME DE TIRAGE  (aucun appel Streamlit)
+# 4.  ALGORITHME DE TIRAGE
 # =============================================================================
 def masks(df: pd.DataFrame, st_: dict):
     return {"LOW_OLD": df.old20 < st_["m_old20"]-st_["sd_old20"],
@@ -122,47 +129,50 @@ def mean_lp_ok(sub, st_):
 def pick_five(tag, feuille, used, F):
     df, st_, fqs = F[feuille]["df"], F[feuille]["stats"], F[feuille]["freq_cols"]
     pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
-    if len(pool)<N_PER_FEUIL_TAG: return None
+    if len(pool) < N_PER_FEUIL_TAG: return None
     for _ in range(MAX_TRY_TAG):
-        samp=pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0,1_000_000)).copy()
+        samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0,1_000_000)).copy()
         if tag=="LOW_OLD" and samp.old20.mean()>=st_["m_old20"]-MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
         if tag=="HIGH_OLD"and samp.old20.mean()<=st_["m_old20"]+MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
         if tag=="LOW_PLD" and samp.pld20.mean()>=st_["m_pld20"]-MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
         if tag=="HIGH_PLD"and samp.pld20.mean()<=st_["m_pld20"]+MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
         if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fqs): continue
-        samp["source"], samp["group"]=feuille,tag
-        samp["old_cat"]=cat_code(tag) if "OLD" in tag else 0
-        samp["pld_cat"]=cat_code(tag) if "PLD" in tag else 0
+        samp["source"], samp["group"] = feuille, tag
+        samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
+        samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
         return samp
     return None
 
 def build_sheet(F):
-    all_cols=F["all_freq_cols"]
+    all_cols = F["all_freq_cols"]
     for _ in range(MAX_TRY_FULL):
-        taken={sh:set() for sh in F if sh!="all_freq_cols"}
+        taken = {sh:set() for sh in F if sh!="all_freq_cols"}
         groups, ok = [], True
         for tag in TAGS:
             parts=[]
             for sh in taken:
-                sub=pick_five(tag,sh,taken[sh],F)
+                sub = pick_five(tag, sh, taken[sh], F)
                 if sub is None: ok=False; break
                 parts.append(sub); taken[sh].update(sub.ortho)
             if not ok: break
             groups.append(shuffled(pd.concat(parts, ignore_index=True)))
         if ok:
-            df=pd.concat(groups, ignore_index=True)
-            order=["ortho"]+NUM_BASE+all_cols+["source","group","old_cat","pld_cat"]
+            df = pd.concat(groups, ignore_index=True)
+            order = ["ortho"]+NUM_BASE+all_cols+["source","group","old_cat","pld_cat"]
             return df[order]
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
 # =============================================================================
-# 5.  LANCEMENT ASYNCHRONE (Executor)  🚀
+# 5.  EXECUTOR + FUTURE   (sécurité ajoutée)
 # =============================================================================
 if "executor" not in st.session_state:
     st.session_state.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 def submit_future():
-    if "future" in st.session_state: return
+    if "future" in st.session_state:         # déjà lancé
+        return
+    if "sheets" not in st.session_state:     # charge les feuilles si nécessaire
+        st.session_state.sheets = load_sheets()
     fut = st.session_state.executor.submit(build_sheet, st.session_state.sheets)
     st.session_state.future = fut
 
@@ -186,37 +196,45 @@ def poll_future():
 # =============================================================================
 def html_page(words, with_download, start_ms, cycle_ms=350, step_ms=14):
     end_msg="Merci !" if with_download else "Fin de l’entraînement"
-    dl="""
-    const csv=["word;rt_ms;response",...results.map(r=>`${{r.word}};${{r.rt_ms}};${{r.response}}`)].join("\\n");
+    download_js=""
+    if with_download:
+        download_js="""
+    const csv=["word;rt_ms;response",
+               ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\\n");
     const a=document.createElement('a');
-    a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv'}}));
-    a.download='results.csv';a.textContent='Télécharger les résultats';
-    a.style.fontSize='32px';a.style.marginTop='30px';document.body.appendChild(a);
-    """ if with_download else ""
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"/>
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download='results.csv';
+    a.textContent='Télécharger les résultats';
+    a.style.fontSize='32px';
+    a.style.marginTop='30px';
+    document.body.appendChild(a);
+    """
+    return f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
 html,body{{height:100%;margin:0;display:flex;flex-direction:column;align-items:center;
 justify-content:center;font-family:'Courier New',monospace;}}
-#scr{{font-size:60px;user-select:none;}}#ans{{display:none;font-size:48px;width:60%;text-align:center;}}
+#scr{{font-size:60px;user-select:none;}}
+#ans{{display:none;font-size:48px;width:60%;text-align:center;}}
 </style></head><body tabindex="0"><div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 window.addEventListener('load',()=>document.body.focus());
 const WORDS={json.dumps(words)},CYCLE={cycle_ms},START={start_ms},STEP={step_ms};
 let i=0,res=[],scr=document.getElementById('scr'),ans=document.getElementById('ans');
 function next(){{if(i>=WORDS.length){{fin();return;}}
- const w=WORDS[i],mask='#'.repeat(w.length);let sd=START,hd=CYCLE-sd,ts,th,t0=performance.now(),act=!0;
- (function loop(){{if(!act)return;scr.textContent=w;
-   ts=setTimeout(()=>{{if(!act)return;scr.textContent=mask;
-     th=setTimeout(()=>{{if(act){{sd+=STEP;hd=Math.max(0,CYCLE-sd);loop();}}}},hd);
-   }},sd);}})();
- window.addEventListener('keydown',function sp(e){{if(e.code==='Space'&&act){{act=!1;
-   clearTimeout(ts);clearTimeout(th);const rt=Math.round(performance.now()-t0);
-   window.removeEventListener('keydown',sp);scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
-   ans.addEventListener('keydown',function en(ev){{if(ev.key==='Enter'){{ev.preventDefault();
-     res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});ans.removeEventListener('keydown',en);
-     ans.style.display='none';i++;next();}}}},{{once:!0}});
- }}}},{{once:!0}});}}
-function fin(){{scr.style.fontSize='40px';scr.textContent='{end_msg}';{dl}}}
+  const w=WORDS[i],mask='#'.repeat(w.length);let sd=START,hd=CYCLE-sd,ts,th,t0=performance.now(),act=!0;
+  (function loop(){{if(!act)return;scr.textContent=w;
+    ts=setTimeout(()=>{{if(!act)return;scr.textContent=mask;
+      th=setTimeout(()=>{{if(act){{sd+=STEP;hd=Math.max(0,CYCLE-sd);loop();}}}},hd);
+    }},sd);}})();
+  function onSpace(e){{if(e.code==='Space'&&act){{act=!1;clearTimeout(ts);clearTimeout(th);
+    const rt=Math.round(performance.now()-t0);
+    window.removeEventListener('keydown',onSpace);
+    scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
+    ans.addEventListener('keydown',function en(ev){{if(ev.key==='Enter'){{ev.preventDefault();
+      res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
+      ans.removeEventListener('keydown',en);ans.style.display='none';i++;next();}}}},{{once:!0}});
+ }}}}window.addEventListener('keydown',onSpace);}}
+function fin(){{scr.style.fontSize='40px';scr.textContent='{end_msg}';{download_js}}}
 next();
 </script></body></html>"""
 
@@ -238,8 +256,9 @@ if st.session_state.page=="intro":
 
 # ---- FAMILIARISATION ------------------------------------------------------ #
 elif st.session_state.page=="fam":
-    submit_future()      # lance le tirage si pas déjà fait
-    poll_future()        # vérifie si c’est terminé
+    submit_future()   # lance le tirage si nécessaire
+    if "future" in st.session_state:
+        poll_future()     # vérifie si terminé
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **Espace** quand le mot apparaît, puis tapez ce que vous avez lu et validez avec **Entrée**.")
     components.v1.html(html_page(PRACTICE_WORDS,False,250),height=650,scrolling=False)
@@ -259,15 +278,17 @@ elif st.session_state.page=="fam":
                       animation:spin 1s linear infinite;"></div>
           <span style="margin-left:10px;">Tirage des 80 mots en cours…</span>
         </div>
-        <style>@keyframes spin{0%{{transform:rotate(0)}}100%{{transform:rotate(360deg)}}}</style>
+        <style>@keyframes spin{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}</style>
         """, unsafe_allow_html=True)
 
 # ---- TEST PRINCIPAL ------------------------------------------------------- #
 elif st.session_state.page=="exp":
     if not st.session_state.tirage_ready:
-        st.warning("Les mots ne sont pas encore prêts. Merci de patienter…"); poll_future(); st.stop()
+        st.warning("Les mots ne sont pas encore prêts. Merci de patienter…")
+        submit_future(); poll_future(); st.stop()
     tirage_df = st.session_state.tirage_df
     stimuli   = st.session_state.stimuli
     st.header("Test principal (80 mots)")
-    with st.expander("Statistiques du tirage (aperçu)"): st.dataframe(tirage_df.head())
+    with st.expander("Statistiques du tirage (aperçu)"):
+        st.dataframe(tirage_df.head())
     components.v1.html(html_page(stimuli,True,14),height=650,scrolling=False)
