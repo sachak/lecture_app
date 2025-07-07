@@ -1,218 +1,186 @@
-# exp3.py ────────────────────────────────────────────────────────────────
-from __future__ import annotations
-import random, threading, json, time
-from pathlib import Path
+# -*- coding: utf-8 -*-
+"""
+EXPÉRIENCE 3 : sélection adaptative des 80 mots (4×20).
+CSV UTF-8, séparateur « ; », décimales « . ».
+Fenêtres élargies automatiquement jusqu’à réussite.
+"""
 
-import pandas as pd
-import streamlit as st
-from streamlit import components
-from streamlit.runtime.scriptrunner import (
-    add_script_run_ctx, get_script_run_ctx,
+import json, random, pathlib, pandas as pd, numpy as np, streamlit as st
+import streamlit.components.v1 as components
+
+# =============== 0. CONFIG STREAMLIT ===============
+st.set_page_config(page_title="Expérience 3", layout="wide")
+st.markdown(
+    "<style>#MainMenu,header,footer{visibility:hidden}"
+    ".css-1d391kg{display:none}</style>",
+    unsafe_allow_html=True
 )
 
-# ───────────── FICHIERS / CHEMINS ───────────────────────────────────────
-ROOT  = Path(__file__).parent
-XLSX  = ROOT / "Lexique.xlsx"
-PRACTICE = ["PAIN", "EAU"]
+# =============== 1. LEXIQUE (. comme décimale) ===============
+CSV_FILE = "Lexique383.csv"      # placé à côté du script
 
-# ───────────── PARAMÈTRES DE TIRAGE (inchangés) ─────────────────────────
-MEAN_FACTOR_OLDPLD = 0.40
-MEAN_DELTA         = {"letters": 0.65, "phons": 0.65}
-SD_MULTIPLIER      = {"letters": 2.0, "phons": 2.0,
-                      "old20": 0.25, "pld20": 0.25, "freq": 1.8}
-N_PER_FEUIL_TAG = 5
-TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
-MAX_TRY_TAG     = 1_000
-MAX_TRY_FULL    = 1_000
-NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
-rng             = random.Random()
+@st.cache_data(show_spinner="Chargement du lexique…")
+def load_lexique() -> pd.DataFrame:
+    df = pd.read_csv(CSV_FILE, sep=";", decimal=".", encoding="utf-8",
+                     dtype=str, engine="python", on_bad_lines="skip")
 
-# ───────────── CONFIG STREAMLIT ─────────────────────────────────────────
-st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown("<style>#MainMenu,header,footer{visibility:hidden;}</style>",
-            unsafe_allow_html=True)
-rerun = st.rerun if hasattr(st, "rerun") else st.experimental_rerun
+    ren = {}
+    for col in df.columns:
+        l = col.lower()
+        if "étiquettes" in l or "ortho" in l or "word" in l:   ren[col] = "word"
+        elif "old20" in l:           ren[col] = "old20"
+        elif "pld20" in l:           ren[col] = "pld20"
+        elif "freqlemfilms2" in l:   ren[col] = "freq"
+        elif "nblettres" in l:       ren[col] = "let"
+        elif "nbphons" in l:         ren[col] = "pho"
+    df = df.rename(columns=ren)
 
-# ╔════════════════ 1.  FONCTION LOURDE (aucun Streamlit) ════════════════╗
-def to_float(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(
-        s.astype(str)
-         .str.replace(" ",  "", regex=False)
-         .str.replace("\xa0","", regex=False)
-         .str.replace(",", ".", regex=False),
-        errors="coerce"
-    )
+    need = {"word", "old20", "pld20", "freq", "let", "pho"}
+    if not need.issubset(df.columns):
+        st.error(f"Colonnes manquantes : {need - set(df.columns)}")
+        st.stop()
 
-def build_sheet() -> pd.DataFrame:
-    if not XLSX.exists():
-        raise FileNotFoundError("Lexique.xlsx introuvable")
+    df.word = df.word.str.upper()
+    for c in need - {"word"}:
+        df[c] = df[c].astype(float)
 
-    xls = pd.ExcelFile(XLSX)
-    sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
-    if len(sheets) != 4:
-        raise RuntimeError("Il faut 4 feuilles Feuil1 … Feuil4")
+    return df.dropna()
 
-    feuilles, all_fcols = {}, set()
-    for sh in sheets:
-        df = xls.parse(sh)
-        df.columns = df.columns.str.strip().str.lower()
+LEX = load_lexique()
 
-        fcols = [c for c in df.columns if c.startswith("freq")]
-        all_fcols.update(fcols)
+# =============== 2. CRITÈRES ET FENÊTRES ===============
+MASKS = {
+    "LOW_OLD" : LEX.old20 < 1.11,
+    "HIGH_OLD": LEX.old20 > 3.79,
+    "LOW_PLD" : LEX.pld20 < 0.70,
+    "HIGH_PLD": LEX.pld20 > 3.20,
+}
 
-        need = ["ortho","old20","pld20","nblettres","nbphons"] + fcols
-        if any(c not in df.columns for c in need):
-            raise RuntimeError(f"Colonnes manquantes dans {sh}")
+BASE_WIN = dict(freq=(0.44, 2.94),
+                let =(8.5 , 9.5 ),
+                pho =(6.5 , 7.5 ))
 
-        for col in NUM_BASE + fcols:
-            df[col] = to_float(df[col])
+def enlarge(win, step):
+    return {k: (v[0]-step, v[1]+step) for k, v in win.items()}
 
-        df["ortho"] = df["ortho"].astype(str).str.upper()
-        df = df.dropna(subset=need).reset_index(drop=True)
+# =============== 3. SÉLECTION ADAPTATIVE (boucle élargissement) ===============
+@st.cache_data(show_spinner="Sélection des 80 mots…")
+def pick_stimuli():
+    rng = np.random.default_rng()
+    step = 0.0
+    while step <= 2.0:                     # élargit max ±2
+        win = enlarge(BASE_WIN, step)
+        chosen, final = set(), []
+        success = True
 
-        stats = {f"m_{c}": df[c].mean() for c in ("old20","pld20","nblettres","nbphons")}
-        stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
-                  ("old20","pld20","nblettres","nbphons") + tuple(fcols)}
+        for name, mask in MASKS.items():
+            pool = LEX.loc[mask & ~LEX.word.isin(chosen)].reset_index(drop=True)
+            if len(pool) < 20:
+                success = False
+                break
 
-        feuilles[sh] = {"df": df, "stats": stats, "freq_cols": fcols}
+            # --------- tirages aléatoires (10 000 listes de 20 indices) ----------
+            idx_samples = np.array(
+                [rng.choice(len(pool), size=20, replace=False) for _ in range(10_000)]
+            )
 
-    feuilles["all_freq_cols"] = sorted(all_fcols)
+            med_freq = np.median(pool.freq.values[idx_samples], axis=1)
+            med_let  = np.median(pool.let .values[idx_samples], axis=1)
+            med_pho  = np.median(pool.pho .values[idx_samples], axis=1)
 
-    def masks(df,s): return {"LOW_OLD": df.old20 < s["m_old20"]-s["sd_old20"],
-                             "HIGH_OLD":df.old20 > s["m_old20"]+s["sd_old20"],
-                             "LOW_PLD": df.pld20 < s["m_pld20"]-s["sd_pld20"],
-                             "HIGH_PLD":df.pld20 > s["m_pld20"]+s["sd_pld20"]}
-    def sd_ok(sub,s,fq):
-        return (sub.nblettres.std(ddof=0)<=s["sd_nblettres"]*SD_MULTIPLIER["letters"] and
-                sub.nbphons .std(ddof=0)<=s["sd_nbphons"]  *SD_MULTIPLIER["phons"]   and
-                sub.old20   .std(ddof=0)<=s["sd_old20"]    *SD_MULTIPLIER["old20"]   and
-                sub.pld20   .std(ddof=0)<=s["sd_pld20"]    *SD_MULTIPLIER["pld20"]   and
-                all(sub[c].std(ddof=0)<=s[f"sd_{c}"]*SD_MULTIPLIER["freq"] for c in fq))
-    def mean_ok(sub,s):
-        return (abs(sub.nblettres.mean()-s["m_nblettres"])<=MEAN_DELTA["letters"]*s["sd_nblettres"] and
-                abs(sub.nbphons.mean() -s["m_nbphons"])   <=MEAN_DELTA["phons"]  *s["sd_nbphons"])
-    def cat_code(tag:str)->int: return -1 if "LOW" in tag else 1
-    def pick(tag,feuille,used,F):
-        df,s,fq = F[feuille]["df"],F[feuille]["stats"],F[feuille]["freq_cols"]
-        pool = df.loc[masks(df,s)[tag] & ~df.ortho.isin(used)]
-        if len(pool) < N_PER_FEUIL_TAG: return None
-        for _ in range(MAX_TRY_TAG):
-            samp = pool.sample(N_PER_FEUIL_TAG,random_state=rng.randint(0,1_000_000)).copy()
-            if tag=="LOW_OLD" and samp.old20.mean()>=s["m_old20"]-MEAN_FACTOR_OLDPLD*s["sd_old20"]:continue
-            if tag=="HIGH_OLD"and samp.old20.mean()<=s["m_old20"]+MEAN_FACTOR_OLDPLD*s["sd_old20"]:continue
-            if tag=="LOW_PLD" and samp.pld20.mean()>=s["m_pld20"]-MEAN_FACTOR_OLDPLD*s["sd_pld20"]:continue
-            if tag=="HIGH_PLD"and samp.pld20.mean()<=s["m_pld20"]+MEAN_FACTOR_OLDPLD*s["sd_pld20"]:continue
-            if not mean_ok(samp,s):continue
-            if sd_ok(samp,s,fq):
-                samp["source"]=feuille; samp["group"]=tag
-                samp["old_cat"]=cat_code(tag) if "OLD" in tag else 0
-                samp["pld_cat"]=cat_code(tag) if "PLD" in tag else 0
-                return samp
-        return None
+            ok = ((win["freq"][0] <= med_freq) & (med_freq <= win["freq"][1]) &
+                  (win["let" ][0] <= med_let ) & (med_let  <= win["let" ][1]) &
+                  (win["pho" ][0] <= med_pho ) & (med_pho  <= win["pho" ][1]))
 
-    for _ in range(MAX_TRY_FULL):
-        taken={sh:set() for sh in feuilles if sh!="all_freq_cols"}; groups=[]; ok=True
-        for tag in TAGS:
-            part=[]
-            for sh in taken:
-                sub=pick(tag,sh,taken[sh],feuilles)
-                if sub is None: ok=False; break
-                part.append(sub); taken[sh].update(sub.ortho)
-            if not ok: break
-            groups.append(pd.concat(part,ignore_index=True))
-        if ok:
-            df=pd.concat(groups,ignore_index=True)
-            order=["ortho"]+NUM_BASE+feuilles["all_freq_cols"]+["source","group","old_cat","pld_cat"]
-            return df[order]
-    raise RuntimeError("Tirage impossible")
+            if ok.any():                                    # échantillon parfait
+                best_idx = np.flatnonzero(ok)[0]
+            else:                                           # meilleur compromis
+                penalty = (np.clip(win["freq"][0]-med_freq,0,None) +
+                           np.clip(med_freq-win["freq"][1],0,None) +
+                           np.clip(win["let"][0]-med_let ,0,None) +
+                           np.clip(med_let -win["let"][1],0,None) +
+                           np.clip(win["pho"][0]-med_pho ,0,None) +
+                           np.clip(med_pho -win["pho"][1],0,None))
+                best_idx = penalty.argmin()
+                st.warning(f"{name} : médianes approchées (pénalité {penalty[best_idx]:.2f}).")
 
-# ╔═════════════ 2. Lancement du thread (avec ScriptRunContext) ═══════════╗
-def launch_thread_once():
-    if "tirage_ready" in st.session_state:   # déjà lancé
-        return
-    st.session_state.tirage_ready = False
-    st.session_state.tirage_error = ""
+            sample = pool.iloc[idx_samples[best_idx]]
+            final.extend(sample.word.tolist())
+            chosen.update(sample.word)
 
-    def worker():
-        try:
-            df = build_sheet()
-        except Exception as e:
-            st.session_state.tirage_error = str(e)
-        else:
-            st.session_state.tirage_df   = df
-            lst = df.ortho.tolist(); random.shuffle(lst)
-            st.session_state.stimuli     = lst
-            st.session_state.tirage_ready= True
-        rerun()                    # relance unique
+        if success and len(final) == 80:
+            if step > 0:
+                st.info(f"Fenêtres élargies de ±{step:.1f} pour respecter unicité + médianes.")
+            random.shuffle(final)
+            return final
 
-    th = threading.Thread(target=worker, daemon=True)
-    add_script_run_ctx(th, get_script_run_ctx())  # accès session_state ok
-    th.start()
+        step += 0.1
 
-launch_thread_once()
+    st.error("Impossible de constituer 80 mots uniques même après élargissement ±2.")
+    st.stop()
 
-# ╔═════════════ 3. HTML / JS autonome (aucune f-string) ══════════════════╗
-HTML = r"""
-<!DOCTYPE html><html><head><meta charset="utf-8"/>
-<style>html,body{height:100%;margin:0;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-family:'Courier New',monospace}
-#scr{font-size:60px;user-select:none}#ans{display:none;font-size:48px;width:60%;text-align:center}
-</style></head><body tabindex="0"><div id="scr"></div><input id="ans"/>
-<script>
-const W=__WORDS__,DL=__DL__;let i=0,r=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
-function n(){if(i>=W.length){f();return;}const w=W[i],m="#".repeat(w.length);let sh=14,hd=336,tS,tH,ok=true,t0=performance.now();
-(function l(){if(!ok)return;scr.textContent=w;
-tS=setTimeout(()=>{if(!ok)return;scr.textContent=m;
-tH=setTimeout(()=>{if(ok){sh+=14;hd=Math.max(0,350-sh);l();}},hd);},sh);})();
-function sp(e){if(e.code==="Space"&&ok){ok=false;clearTimeout(tS);clearTimeout(tH);
-const rt=Math.round(performance.now()-t0);window.removeEventListener("keydown",sp);
-scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
-function en(ev){if(ev.key==="Enter"){ev.preventDefault();
-r.push({word:w,rt_ms:rt,response:ans.value.trim()});ans.removeEventListener("keydown",en);
-ans.style.display="none";i++;n();}}ans.addEventListener("keydown",en);}}
-window.addEventListener("keydown",sp);}function f(){scr.style.fontSize="40px";
-scr.textContent=DL?"Merci !":"Fin entraînement";if(!DL)return;
-const csv=["word;rt_ms;response",...r.map(o=>`${o.word};${o.rt_ms};${o.response}`)].join("\\n");
-const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-a.download="results.csv";a.textContent="Télécharger les résultats";
-a.style.fontSize="32px";a.style.marginTop="30px";document.body.appendChild(a);}n();
-</script></body></html>"""
-def make_html(words:list[str], dl=True):
-    return (HTML.replace("__WORDS__", json.dumps(words))
-                .replace("__DL__",   "true" if dl else "false"))
+STIMULI = pick_stimuli()
 
-# ╔═════════════ 4. Fragment familarisation (st.fragment) ═════════════════╗
-@st.fragment
-def familiarisation():
-    st.header("Familiarisation (2 mots)")
-    if st.session_state.tirage_ready: st.success("Stimuli du test prêts !")
-    elif st.session_state.tirage_error: st.error(st.session_state.tirage_error)
-    else: st.info("Recherche des stimuli en arrière-plan…")
-
-    components.v1.html(make_html(PRACTICE, dl=False), height=650, scrolling=False)
-
-    st.divider()
-    st.button("Passer au test principal",
-              disabled=not st.session_state.tirage_ready,
-              on_click=lambda:(st.session_state.update({"page":"exp"}), rerun()))
-
-# ╔═════════════ 5. Navigation ────────────────────────────────────────────╗
+# =============== 4. PROTOCOLE VISUEL ===============
+CYCLE, START, STEP = 350, 14, 14
 if "page" not in st.session_state: st.session_state.page = "intro"
 
 if st.session_state.page == "intro":
-    st.title("EXPERIENCE 3 – mots masqués")
-    st.write("Familiarisation puis test principal.")
-    if st.button("Commencer la familiarisation"):
-        st.session_state.page = "fam"; rerun()
+    st.title("EXPERIMENT 3 – mots masqués (CSV décimal '.') ")
+    if st.button("Démarrer l’expérience"):
+        st.session_state.page = "exp"
+        st.experimental_rerun()
 
-elif st.session_state.page == "fam":
-    familiarisation()      # le fragment se rafraîchit tout seul
+else:  # page expérience
+    html = f"""
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+html,body{{height:100%;margin:0;display:flex;align-items:center;justify-content:center;
+font-family:'Courier New',monospace}}
+#scr{{font-size:60px;user-select:none}}
+#ans{{display:none;font-size:48px;width:60%;text-align:center}}
+</style></head>
+<body id="body" tabindex="0">
+<div id="scr"></div><input id="ans" autocomplete="off"/>
+<script>
+window.addEventListener('load',()=>document.getElementById('body').focus());
 
-else:                      # page « exp »
-    if not st.session_state.tirage_ready:
-        st.warning("Stimuli pas prêts…"); st.stop()
-    st.header("Test principal (80 mots)")
-    with st.expander("Aperçu du tirage"):
-        st.dataframe(st.session_state.tirage_df.head())
-    components.v1.html(make_html(st.session_state.stimuli, dl=True),
-                       height=650, scrolling=False)
+const W={json.dumps(STIMULI)},C={CYCLE},S={START},P={STEP};
+let i=0,res=[];
+const scr=document.getElementById('scr'), ans=document.getElementById('ans');
+
+function run(){{ if(i>=W.length){{fin();return;}}
+  const w=W[i],m='#'.repeat(w.length);
+  let sd=S,md=C-sd,t0=performance.now(),on=true,t1,t2;
+  (function loop(){{ if(!on)return;
+    scr.textContent=w;
+    t1=setTimeout(()=>{{ if(!on)return;
+       scr.textContent=m;
+       t2=setTimeout(()=>{{ if(on){{ sd+=P;md=Math.max(0,C-sd);loop(); }} }},md);
+    }},sd);
+  }})();
+  window.addEventListener('keydown',function sp(e){{ if(e.code==='Space'&&on){{
+        on=false;clearTimeout(t1);clearTimeout(t2);
+        const rt=Math.round(performance.now()-t0);
+        window.removeEventListener('keydown',sp);
+        scr.textContent='';ans.style.display='block';ans.value='';ans.focus();
+        ans.addEventListener('keydown',function ent(ev){{ if(ev.key==='Enter'){{
+           ev.preventDefault();
+           res.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
+           ans.removeEventListener('keydown',ent);
+           ans.style.display='none';i++;run();
+        }}}); }} }});
+}}
+function fin(){{ scr.style.fontSize='40px';scr.textContent='Merci !';
+  const csv=['word;rt_ms;response',...res.map(r=>r.word+';'+r.rt_ms+';'+r.response)].join('\\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv'}}));
+  a.download='results.csv';
+  a.textContent='Télécharger les résultats';
+  a.style.fontSize='32px';a.style.marginTop='30px';
+  document.body.appendChild(a);
+}}
+run();
+</script></body></html>
+"""
+    components.html(html, height=650, scrolling=False)
