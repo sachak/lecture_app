@@ -4,8 +4,6 @@ EXPÉRIENCE 3 – tirage des 80 mots en arrière-plan
 Exécution :  streamlit run exp3_async.py
 """
 from __future__ import annotations
-
-# ───────────────────────────── IMPORTS ──────────────────────────────── #
 import json, random, time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -15,7 +13,7 @@ import streamlit as st
 from streamlit import components
 
 
-# ───────────────────── 0. CONFIGURATION STREAMLIT ───────────────────── #
+# ─────────────────────────── CONFIG STREAMLIT ─────────────────────────── #
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
@@ -24,7 +22,7 @@ st.markdown("""
 </style>""", unsafe_allow_html=True)
 
 
-# ───────────────────── 1. CONSTANTES / PARAMÈTRES ───────────────────── #
+# ─────────────────────── PARAMÈTRES GÉNÉRAUX ──────────────────────────── #
 MEAN_FACTOR_OLDPLD = 0.40
 MEAN_DELTA   = {"letters": 0.65, "phons": 0.65}
 SD_MULTIPLIER = {"letters": 2.0, "phons": 2.0,
@@ -38,10 +36,10 @@ MAX_TRY_FULL    = 1_000
 
 rng             = random.Random()
 NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS  = ["PAIN", "EAU"]          # phase de familiarisation
+PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 
-# ───────────────────── 2. OUTILS GÉNÉRIQUES ─────────────────────────── #
+# ──────────────────────────── OUTILS ──────────────────────────────────── #
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
@@ -56,11 +54,11 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
 
-def cat_code(tag: str) -> int:
+def cat_code(tag: str) -> int:             # -1 (LOW) / +1 (HIGH)
     return -1 if "LOW" in tag else 1
 
 
-# ───────────────────── 3. CHARGEMENT D’EXCEL ─────────────────────────── #
+# ─────────────────────── CHARGEMENT D’EXCEL ───────────────────────────── #
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
@@ -99,11 +97,11 @@ def load_sheets() -> dict[str, dict]:
     return feuilles
 
 
-# ───────────────────── 4. TIRAGE DES 80 MOTS ─────────────────────────── #
+# ─────────────────────── TIRAGE DES 80 MOTS ───────────────────────────── #
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
-    return {"LOW_OLD": df.old20 < st_["m_old20"] - st_["sd_old20"],
+    return {"LOW_OLD":  df.old20 < st_["m_old20"] - st_["sd_old20"],
             "HIGH_OLD": df.old20 > st_["m_old20"] + st_["sd_old20"],
-            "LOW_PLD": df.pld20 < st_["m_pld20"] - st_["sd_pld20"],
+            "LOW_PLD":  df.pld20 < st_["m_pld20"] - st_["sd_pld20"],
             "HIGH_PLD": df.pld20 > st_["m_pld20"] + st_["sd_pld20"]}
 
 
@@ -121,7 +119,9 @@ def mean_lp_ok(sub: pd.DataFrame, st_: dict) -> bool:
 
 
 def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
-    df, st_, fqs = FEUILLES[feuille]["df"], FEUILLES[feuille]["stats"], FEUILLES[feuille]["freq_cols"]
+    df, st_, fqs = (FEUILLES[feuille]["df"],
+                    FEUILLES[feuille]["stats"],
+                    FEUILLES[feuille]["freq_cols"])
     pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
         return None
@@ -146,7 +146,6 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
 
 
 def build_sheet() -> pd.DataFrame:
-    """Fonction lourde : génère la liste complète – AUCUNE dépendance Streamlit."""
     FEUILLES = load_sheets()
     all_freq_cols = FEUILLES["all_freq_cols"]
 
@@ -171,76 +170,162 @@ def build_sheet() -> pd.DataFrame:
     raise RuntimeError("Impossible de générer la liste (contraintes trop strictes).")
 
 
-# ───────────────────── 5. LANCEMENT EN ARRIÈRE-PLAN ───────────────────── #
+# ─────────────────── LANCEMENT ARRIÈRE-PLAN ───────────────────────────── #
 if "tirage_future" not in st.session_state:
-    # on démarre la tâche une seule fois
     executor = ThreadPoolExecutor(max_workers=1)
     st.session_state.tirage_future = executor.submit(build_sheet)
     st.session_state.executor      = executor
     st.session_state.tirage_done   = False
     st.session_state.tirage_error  = ""
 
-# À chaque exécution du script Streamlit on vérifie si la tâche est terminée
-if not st.session_state.tirage_done and st.session_state.tirage_future.done():
+# on vérifie si la tâche est terminée
+if (not st.session_state.tirage_done) and st.session_state.tirage_future.done():
     try:
-        df = st.session_state.tirage_future.result()    # récupère le résultat ou lève une exception
+        df = st.session_state.tirage_future.result()
     except Exception as exc:
         st.session_state.tirage_error = str(exc)
     else:
         st.session_state.tirage_df = df
         words = df.ortho.tolist(); random.shuffle(words)
-        st.session_state.stimuli   = words
+        st.session_state.stimuli = words
     st.session_state.tirage_done = True
-    st.experimental_rerun()       # rafraîchit immédiatement l’interface
+    st.experimental_rerun()   # rafraîchit immédiatement
 
 
-# ───────────────────── 6. GÉNÉRATION HTML / JS ────────────────────────── #
+# ───────────────────── GÉNÉRATION HTML / JS ───────────────────────────── #
 def experiment_html(words: list[str], *, with_download=True,
                     cycle_ms=350, start_ms=14, step_ms=14) -> str:
-    download_js = ""; end_message="Merci !" if with_download else "Fin de l’entraînement"
+    download_js = ""
+    end_message = "Merci !" if with_download else "Fin de l’entraînement"
+
     if with_download:
         download_js = """
     const csv = ["word;rt_ms;response",
                  ...results.map(r => `${{r.word}};${{r.rt_ms}};${{r.response}}`)].join("\\n");
     const a = document.createElement("a");
-    a.href   = URL.createObjectURL(new Blob([csv], {{type:"text/csv"}}));
+    a.href = URL.createObjectURL(new Blob([csv], {{type:"text/csv"}}));
     a.download = "results.csv";
     a.textContent = "Télécharger les résultats";
     a.style.fontSize = "32px";
     a.style.marginTop = "30px";
     document.body.appendChild(a);
     """
+
     return f"""
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"/>
 <style>
-html,body{{height:100%;margin:0;display:flex;flex-direction:column;align-items:center;
-justify-content:center;font-family:'Courier New',monospace}}
-#scr{{font-size:60px;user-select:none}} #ans{{display:none;font-size:48px;width:60%;text-align:center}}
-</style></head><body tabindex="0"><div id="scr"></div><input id="ans" autocomplete="off"/>
-<script>window.addEventListener("load",()=>document.body.focus());
-const WORDS={json.dumps(words)},CYCLE={cycle_ms},START={start_ms},STEP={step_ms};
-let trial=0,results=[];const scr=document.getElementById("scr"),ans=document.getElementById("ans");
-function nextTrial(){{if(trial>=WORDS.length){{endExperiment();return}}const w=WORDS[trial],
-mask="#".repeat(w.length);let showDur=START,hideDur=CYCLE-showDur,tShow,tHide;
-const t0=performance.now();let active=true;(function loop(){{if(!active)return;
-scr.textContent=w;tShow=setTimeout(()=>{{if(!active)return;scr.textContent=mask;
-tHide=setTimeout(()=>{{if(active){{showDur+=STEP;hideDur=Math.max(0,CYCLE-showDur);loop()}}}},hideDur)}},showDur) }})();
-function onSpace(e){{if(e.code==="Space"&&active){{active=false;clearTimeout(tShow);clearTimeout(tHide);
-const rt=Math.round(performance.now()-t0);window.removeEventListener("keydown",onSpace);
-scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
-function onEnter(ev){{if(ev.key==="Enter"){{ev.preventDefault();
-results.push({{word:w,rt_ms:rt,response:ans.value.trim()}});ans.removeEventListener("keydown",onEnter);
-ans.style.display="none";trial+=1;nextTrial();}}}}ans.addEventListener("keydown",onEnter);}}}}
-window.addEventListener("keydown",onSpace);}function endExperiment(){{scr.style.fontSize="40px";
-scr.textContent="{end_message}";{download_js}}nextTrial();</script></body></html>"""
+html,body {{
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Courier New', monospace;
+}}
+#scr {{ font-size: 60px; user-select: none; }}
+#ans {{ display: none; font-size: 48px; width: 60%; text-align: center; }}
+</style>
+</head>
+<body tabindex="0">
+<div id="scr"></div>
+<input id="ans" autocomplete="off"/>
+<script>
+window.addEventListener("load", () => document.body.focus());
+
+const WORDS = {json.dumps(words)};
+const CYCLE = {cycle_ms};
+const START = {start_ms};
+const STEP  = {step_ms};
+
+let trial = 0;
+let results = [];
+const scr = document.getElementById("scr");
+const ans = document.getElementById("ans");
+
+function nextTrial() {{
+    if (trial >= WORDS.length) {{
+        endExperiment();
+        return;
+    }}
+
+    const w    = WORDS[trial];
+    const mask = "#".repeat(w.length);
+
+    let showDur = START;
+    let hideDur = CYCLE - showDur;
+    let tShow, tHide;
+    const t0 = performance.now();
+    let active = true;
+
+    (function loop() {{
+        if (!active) return;
+
+        scr.textContent = w;
+        tShow = setTimeout(() => {{
+            if (!active) return;
+
+            scr.textContent = mask;
+            tHide = setTimeout(() => {{
+                if (active) {{
+                    showDur += STEP;
+                    hideDur  = Math.max(0, CYCLE - showDur);
+                    loop();
+                }}
+            }}, hideDur);
+        }}, showDur);
+    }})();
+
+    function onSpace(e) {{
+        if (e.code === "Space" && active) {{
+            active = false;
+            clearTimeout(tShow);
+            clearTimeout(tHide);
+
+            const rt = Math.round(performance.now() - t0);
+            window.removeEventListener("keydown", onSpace);
+
+            scr.textContent   = "";
+            ans.style.display = "block";
+            ans.value         = "";
+            ans.focus();
+
+            function onEnter(ev) {{
+                if (ev.key === "Enter") {{
+                    ev.preventDefault();
+                    results.push({{ word: w, rt_ms: rt, response: ans.value.trim() }});
+                    ans.removeEventListener("keydown", onEnter);
+                    ans.style.display = "none";
+                    trial += 1;
+                    nextTrial();
+                }}
+            }}
+            ans.addEventListener("keydown", onEnter);
+        }}
+    }}
+    window.addEventListener("keydown", onSpace);
+}}
+
+function endExperiment() {{
+    scr.style.fontSize = "40px";
+    scr.textContent    = "{end_message}";
+    {download_js}
+}}
+nextTrial();
+</script>
+</body>
+</html>
+"""
 
 
-# ───────────────────── 7. NAVIGATION ──────────────────────────────────── #
+# ───────────────────────── NAVIGATION ──────────────────────────────────── #
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
 
-# ─── PAGE INTRO ─── #
+# ───────────── PAGE INTRO ───────────── #
 if st.session_state.page == "intro":
     st.title("EXPERIENCE 3 – mots masqués")
     st.markdown("Cette expérience comporte d’abord **une courte familiarisation** puis le test principal.")
@@ -248,7 +333,7 @@ if st.session_state.page == "intro":
         st.session_state.page = "fam"; st.rerun()
 
 
-# ─── PAGE FAMILIARISATION ─── #
+# ───────────── PAGE FAMILIARISATION ───────────── #
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **Espace** dès que vous voyez apparaître le mot, "
@@ -270,13 +355,13 @@ elif st.session_state.page == "fam":
         st.session_state.page = "exp"; st.rerun()
 
 
-# ─── PAGE TEST PRINCIPAL ─── #
-else:   # page == "exp"
+# ───────────── PAGE TEST PRINCIPAL ───────────── #
+else:  # page == "exp"
     st.header("Test principal (80 mots)")
 
     if not st.session_state.tirage_done:
         st.warning("Les stimuli sont encore en cours de génération… Merci de patienter.")
-        time.sleep(1)          # petite attente puis rafraîchissement automatique
+        time.sleep(1)
         st.experimental_rerun()
 
     if st.session_state.tirage_error:
