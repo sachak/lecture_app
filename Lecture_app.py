@@ -15,20 +15,19 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ────────────────────────── FONCTION RERUN ────────────────────────────────
-def do_rerun():
-    (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
+# ────────────────────────── RERUN ───────────────────────────────────────────
+do_rerun = lambda: (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
-# ─────────────────────── CONFIGURATION GÉNÉRALE ───────────────────────────
+# ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility:hidden;}
-  .css-1d391kg{display:none;}        /* ancien spinner Streamlit */
+  .css-1d391kg{display:none;}  /* ancien spinner */
 </style>""", unsafe_allow_html=True)
 
 # =============================================================================
-# PARAMÈTRES DU TIRAGE  (IDENTIQUES AUX VERSIONS ANTÉRIEURES)
+# PARAMÈTRES DU TIRAGE
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
@@ -39,11 +38,11 @@ N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 rng             = random.Random()
 
-NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS  = ["PAIN", "EAU"]
+NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS = ["PAIN", "EAU"]
 
 # =============================================================================
-# 1. OUTILS POUR LE TIRAGE (inchangés)
+# 1. OUTILS TIRAGE (inchangés)
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -54,8 +53,7 @@ def to_float(s: pd.Series) -> pd.Series:
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1,
-                     random_state=rng.randint(0, 1_000_000)
-                    ).reset_index(drop=True)
+                     random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
 def cat_code(tag: str) -> int: return -1 if "LOW" in tag else 1
 
@@ -73,7 +71,7 @@ def load_sheets() -> dict[str, dict]:
         df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
         freq = [c for c in df.columns if c.startswith("freq")]
         all_freq.update(freq)
-        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq
+        need = ["ortho","old20","pld20","nblettres","nbphons"] + freq
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {sh}"); st.stop()
 
@@ -82,10 +80,10 @@ def load_sheets() -> dict[str, dict]:
         df = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean()
-                 for c in ("old20", "pld20", "nblettres", "nbphons")}
+                 for c in ("old20","pld20","nblettres","nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0)
                   for c in ("old20","pld20","nblettres","nbphons")+tuple(freq)}
-        feuilles[sh] = {"df": df, "stats": stats, "freq_cols": freq}
+        feuilles[sh] = {"df":df, "stats":stats, "freq_cols":freq}
 
     feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
@@ -130,7 +128,7 @@ def build_sheet() -> pd.DataFrame:
     F = load_sheets(); all_freq = F["all_freq_cols"]
     for _ in range(1000):
         taken = {sh:set() for sh in F if sh!="all_freq_cols"}
-        groups, ok = [], True
+        blocs, ok = [], True
         for tag in TAGS:
             part=[]
             for sh in taken:
@@ -138,16 +136,16 @@ def build_sheet() -> pd.DataFrame:
                 if sub is None: ok=False; break
                 part.append(sub); taken[sh].update(sub.ortho)
             if not ok: break
-            groups.append(shuffled(pd.concat(part, ignore_index=True)))
+            blocs.append(shuffled(pd.concat(part, ignore_index=True)))
         if ok:
-            df = pd.concat(groups, ignore_index=True)
+            df = pd.concat(blocs, ignore_index=True)
             order = ["ortho"] + NUM_BASE + all_freq + \
                     ["source","group","old_cat","pld_cat"]
             return df[order]
     st.error("Impossible de générer la liste."); st.stop()
 
 # =============================================================================
-# 2. TEMPLATE HTML / JS  (fond noir + sortie plein-écran à la fin)
+# 2. TEMPLATE HTML / JS (plein-écran, fond noir, sortie FS à la fin)
 # =============================================================================
 CROSS_FR, SHOW_START, STEP_FR, CYCLE_FR = 30, 1, 1, 20   # frames 60 Hz
 
@@ -164,97 +162,85 @@ background:#000;color:#fff}
 <script>
 const WORDS = $WORDS;
 
-/* ---------- Force plein-écran pour toute la page --------------------- */
+/* --- force plein-écran sur la page Streamlit principale --------------- */
 function goFS(){
-  const el=window.top.document.documentElement;
-  if(!window.top.document.fullscreenElement && el.requestFullscreen){
-       el.requestFullscreen().catch(()=>{});
+  const doc = parent.document;
+  if(!doc.fullscreenElement && doc.documentElement.requestFullscreen){
+      doc.documentElement.requestFullscreen().catch(()=>{});
   }
 }
-window.addEventListener("click",   goFS,{once:true});
-window.addEventListener("keydown", goFS,{once:true});
+parent.document.addEventListener('click',  goFS,{once:true});
+parent.document.addEventListener('keydown',goFS,{once:true});
 
-/* ---------- Mesure fréquence écran ---------------------------------- */
-function estimateFPS(n=120){
+/* --- mesure fréquence -------------------------------------------------- */
+function fpsAvg(n=120){
   return new Promise(ok=>{
-    const ts=[]; function s(t){ts.push(t);
-      ts.length<n?requestAnimationFrame(s):
-      ok(1000/((ts.slice(1).reduce((a,b,i)=>a+b-ts[i],ts[0]))/(n-1))); }
+    const a=[]; function s(t){a.push(t);
+      a.length<n?requestAnimationFrame(s):
+      ok(1000/((a.slice(1).reduce((p,c,i)=>p+c-a[i],a[0]))/(n-1))); }
     requestAnimationFrame(s);
   });
 }
 
-/* ---------- Démarrage / blocage 60 Hz ------------------------------- */
-function init(){
-  estimateFPS().then(fps=>{
-    if(fps>55&&fps<65){startExp();}
-    else{
-      document.body.innerHTML=
-        `<div style="text-align:center;font-size:32px;max-width:80%;color:#fff">
-           Fréquence détectée : <b>$${fps.toFixed(1)} Hz</b><br/>
-           Veuillez utiliser (ou régler) un écran 60 Hz.</div>`;
-    }});
+/* --- start / block ----------------------------------------------------- */
+fpsAvg().then(fps=>{
+  if(fps<55||fps>65){
+    document.body.innerHTML=
+     `<div style='text-align:center;font-size:32px;max-width:80%'>
+        Fréquence détectée : <b>$${fps.toFixed(1)} Hz</b><br/>
+        Veuillez utiliser / régler un écran 60 Hz.</div>`;
+    return;
+  }
+  run();
+});
+
+function run(){
+ let trial=0,results=[];
+ const scr=document.getElementById('scr'),
+       ans=document.getElementById('ans');
+
+ function next(){
+   if(trial>=WORDS.length){fin();return;}
+   let f=0; scr.textContent='+';
+   const cross=()=>++f<$CROSS_FR?requestAnimationFrame(cross)
+                                :stim(WORDS[trial]);
+   requestAnimationFrame(cross);
+ }
+
+ function stim(word){
+   const mask='#'.repeat(word.length);
+   let show=$SHOW_START,fr=0,active=true,t0=performance.now();
+   const loop=()=>{
+     if(!active)return;
+     scr.textContent = fr<show ? word : fr<$CYCLE_FR ? mask : scr.textContent;
+     if(++fr==$CYCLE_FR){show+=$STEP_FR;fr=0;}
+     requestAnimationFrame(loop);
+   };requestAnimationFrame(loop);
+
+   const onSp=e=>{
+     if(e.code==='Space'&&active){
+       active=false;parent.document.removeEventListener('keydown',onSp);
+       const rt=Math.round(performance.now()-t0);
+       scr.textContent=''; ans.style.display='block'; ans.value=''; ans.focus();
+       ans.addEventListener('keydown',function onEnt(ev){
+         if(ev.key==='Enter'){
+           ev.preventDefault();
+           results.push({word,rt_ms:rt,response:ans.value.trim()});
+           ans.removeEventListener('keydown',onEnt);
+           ans.style.display='none'; trial++; next();
+         }});
+     }};
+   parent.document.addEventListener('keydown',onSp);
+ }
+
+ function fin(){
+   try{parent.document.exitFullscreen();}catch(e){}
+   scr.style.fontSize='40px'; scr.textContent=$END_MSG; $DOWNLOAD
+ }
+ next();
 }
-
-/* ---------- Boucle expérimentale ------------------------------------ */
-function startExp(){
-  let trial=0,results=[];
-  const scr=document.getElementById("scr"),
-        ans=document.getElementById("ans");
-
-  function nextTrial(){
-    if(trial>=WORDS.length){fin();return;}
-    let f=0; scr.textContent="+";
-    const cross=()=> ++f<$CROSS_FR ? requestAnimationFrame(cross)
-                                   : runWord(WORDS[trial]);
-    requestAnimationFrame(cross);
-  }
-
-  function runWord(word){
-    const mask="#".repeat(word.length);
-    let show=$SHOW_START, frame=0, active=true, t0=performance.now();
-
-    const stim=()=>{
-      if(!active) return;
-      scr.textContent = frame<show ? word
-                     : frame<$CYCLE_FR ? mask
-                     : scr.textContent;
-      if(++frame==$CYCLE_FR){show+=$STEP_FR; frame=0;}
-      requestAnimationFrame(stim);
-    }; requestAnimationFrame(stim);
-
-    const onSpace=e=>{
-      if(e.code==="Space"&&active){
-        active=false; window.removeEventListener("keydown",onSpace);
-        const rt=Math.round(performance.now()-t0);
-        scr.textContent="";
-        ans.style.display="block"; ans.value=""; ans.focus();
-        ans.addEventListener("keydown",function onEnter(ev){
-          if(ev.key==="Enter"){
-            ev.preventDefault();
-            results.push({word,rt_ms:rt,response:ans.value.trim()});
-            ans.removeEventListener("keydown",onEnter);
-            ans.style.display="none";
-            trial++; nextTrial();
-          }});
-      }};
-    window.addEventListener("keydown",onSpace);
-  }
-
-  function fin(){
-    try{
-      if(window.top.document.fullscreenElement){
-          window.top.document.exitFullscreen();
-      }
-    }catch(e){}
-    scr.style.fontSize="40px";
-    scr.textContent=$END_MSG;
-    $DOWNLOAD
-  }
-  nextTrial();
-}
-init();
-</script></body></html>""")
+</script></body></html>
+""")
 
 def experiment_html(words, *, with_download=True):
     download_js=""
@@ -268,7 +254,7 @@ a.download="results.csv";
 a.textContent="Télécharger les résultats";
 a.style.fontSize="32px";a.style.marginTop="30px";
 document.body.appendChild(a);"""
-    download_js=download_js.replace("$","$$")
+    download_js = download_js.replace("$","$$")
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(words),
@@ -279,34 +265,37 @@ document.body.appendChild(a);"""
     )
 
 # =============================================================================
-# 3. NAVIGATION STREAMLIT  (plein-écran déclenché sur la page d’accueil)
+# 3. NAVIGATION STREAMLIT
 # =============================================================================
 if "page" not in st.session_state:            st.session_state.page="intro"
 if "tirage_en_cours" not in st.session_state: st.session_state.tirage_en_cours=False
 if "tirage_ok"      not in st.session_state:  st.session_state.tirage_ok=False
 
-# ---------- JS plein-écran injecté DANS LA PAGE Streamlit (intro) ----------
-st.markdown("""
-<script>
-document.addEventListener("DOMContentLoaded", ()=>{
-  function fs(){let el=document.documentElement;
-    if(!document.fullscreenElement && el.requestFullscreen){
-       el.requestFullscreen().catch(()=>{});}
-  }
-  document.addEventListener("click",fs,{once:true});
-  document.addEventListener("keydown",fs,{once:true});
-});
-</script>""", unsafe_allow_html=True)
-# ----------------------------------------------------------------------------
-
 # ─────────────────────────── INTRO ─────────────────────────────────────────
 if st.session_state.page=="intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
+
+    # composant invisible qui déclenche le plein-écran dès la 1re action
+    components.v1.html("""
+      <script>
+        (function(){
+           function fs(){
+             const doc=document;
+             if(!doc.fullscreenElement && doc.documentElement.requestFullscreen){
+                doc.documentElement.requestFullscreen().catch(()=>{});
+             }
+           }
+           document.addEventListener('click',fs,{once:true});
+           document.addEventListener('keydown',fs,{once:true});
+        })();
+      </script>
+    """, height=0, width=0)
+
     st.markdown("""
 **Expérience standardisée pour un moniteur 60 Hz**  
-(Un premier clic déclenchera le plein-écran.)
+(Le premier clic passe la page en plein-écran.)
 
-**Principe** – Des mots apparaîtront ≈ 17 ms, suivis d’un masque.  
+**Principe** – Des mots sont présentés ≈ 17 ms puis masqués.  
 **Tâche**    – Fixez la croix, appuyez sur **Espace** dès que le mot est reconnu,  
                tapez-le puis validez avec **Entrée**.
 
@@ -316,8 +305,7 @@ if st.session_state.page=="intro":
 """)
 
     # tirage automatique
-    if (not st.session_state.tirage_en_cours
-        and not st.session_state.tirage_ok):
+    if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
         st.session_state.tirage_en_cours=True; do_rerun()
 
     if st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
@@ -338,7 +326,7 @@ if st.session_state.page=="intro":
 elif st.session_state.page=="fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Fixez la croix, appuyez sur **Espace** quand le mot apparaît, "
-                "tapez-le, puis **Entrée**.")
+                "tapez-le puis **Entrée**.")
     components.v1.html(
         experiment_html(PRACTICE_WORDS, with_download=False),
         height=650, scrolling=False
