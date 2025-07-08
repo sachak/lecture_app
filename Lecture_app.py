@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3  –  Reconnaissance de mots masqués
-Test principal sur 80 items (plein écran noir, stimuli blancs)
+EXPÉRIENCE 3 – Reconnaissance de mots masqués
+80 mots, fond noir plein-écran, stimuli blancs.
 
 Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ───────────────────────── PARAMÈTRES DU TIRAGE ────────────────────────────
+# ─────────── PARAMÈTRES DU TIRAGE ───────────────────────────────────────────
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
 SD_MULT            = {"letters": 2.0, "phons": 2.0,
@@ -29,7 +29,7 @@ rng             = random.Random()
 
 NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
 
-# ───────────────────── OUTILS (conversion, shuffle, etc.) ──────────────────
+# ─────────── OUTILS ─────────────────────────────────────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
@@ -45,7 +45,7 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 def cat_code(tag: str) -> int:     # -1 = LOW ; 1 = HIGH
     return -1 if "LOW" in tag else 1
 
-# ────────────────── CHARGEMENT EXCEL & TIRAGE DES 80 MOTS ──────────────────
+# ─────────── CHARGEMENT EXCEL + TIRAGE DES 80 MOTS ─────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
@@ -135,7 +135,7 @@ def build_sheet() -> pd.DataFrame:
             return df[order]
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
-# ─────────────────── G gabarit HTML/JS : plein écran noir ──────────────────
+# ─────────── Gabarit HTML / JS (plein écran noir) ──────────────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -178,7 +178,7 @@ const scr = document.getElementById("scr");
 const ans = document.getElementById("ans");
 const intro = document.getElementById("intro");
 
-/* ——————————————— démarrage / plein écran ——————————————— */
+/* ——— démarrage + plein-écran ——— */
 function launch(){
   intro.style.display="none";
   if(document.documentElement.requestFullscreen){
@@ -194,7 +194,7 @@ window.addEventListener("keydown", function start(e){
   }
 });
 
-/* ——————————————— déroulement d’un essai ——————————————— */
+/* ——— boucle expérimentale ——— */
 function nextTrial(){
   if(trial >= WORDS.length){ endExperiment(); return; }
 
@@ -243,12 +243,12 @@ function nextTrial(){
   window.addEventListener("keydown", onSpace);
 }
 
-/* ——————————————— fin de l’expérience ——————————————— */
+/* ——— fin de l’expérience ——— */
 function endExperiment(){
   scr.style.fontSize="5vw";
   scr.textContent = "Merci !";
   const csv = ["word;rt_ms;response",
-               ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
+               ...results.map(r=>`$$${r.word};$$${r.rt_ms};$$${r.response}`)].join("\\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
   a.download = "results.csv";
@@ -263,7 +263,7 @@ function endExperiment(){
 """)
 
 def experiment_html(words, cycle_ms=350, start_ms=14, step_ms=14):
-    """Produit la page HTML/JS toute prête pour les 80 essais."""
+    """Construit la page HTML/JS pour la phase de test."""
     return HTML_TPL.substitute(
         WORDS=json.dumps(words),
         CYCLE=cycle_ms,
@@ -271,11 +271,11 @@ def experiment_html(words, cycle_ms=350, start_ms=14, step_ms=14):
         STEP=step_ms
     )
 
-# ───────────────────────────  Lancement Streamlit ──────────────────────────
+# ─────────── Interface Streamlit minimale ──────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide",
                    initial_sidebar_state="collapsed")
 
-# masque la chrome Streamlit (mais on reste dans la web-app)
+# on masque tout le chrome Streamlit pour ne conserver que notre composant
 st.markdown(
     """
     <style>
@@ -290,12 +290,11 @@ st.title("Chargement des stimuli…")
 
 with st.spinner("Tirage aléatoire des 80 mots…"):
     tirage_df = build_sheet()
-    mots = tirage_df["ortho"].tolist()
-    random.shuffle(mots)
+    words = tirage_df["ortho"].tolist()
+    random.shuffle(words)
 
-# Le composant HTML occupe tout ce qui reste de la fenêtre Streamlit
 components.v1.html(
-    experiment_html(mots),
-    height=800,   # valeur arbitraire : le composant passe de toute façon en plein écran
+    experiment_html(words),
+    height=800,   # hauteur arbitraire : le composant passe ensuite en plein écran
     scrolling=False
 )
