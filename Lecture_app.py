@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
-(familiarisation + test 80 mots tirés aléatoirement)
+EXPÉRIENCE 3  –  Reconnaissance de mots masqués
+Test principal sur 80 items (plein écran noir, stimuli blancs)
 
 Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
-
 import json, random
 from pathlib import Path
 from string import Template
@@ -16,34 +15,7 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ────────────────────────── OUTIL RERUN COMPATIBLE ─────────────────────────
-def do_rerun():
-    """Force un rerun quel que soit le nom de la fonction dans la version."""
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:                              # anciennes versions
-        st.experimental_rerun()
-
-# ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
-st.set_page_config(page_title="Expérience 3",
-                   layout="wide",
-                   initial_sidebar_state="collapsed")
-
-# habillage noir pour toute la page Streamlit
-st.markdown(
-    """
-    <style>
-        body, .stApp {background:#000 !important; color:#fff !important;}
-        #MainMenu, header, footer {visibility: hidden;}   /* pas de chrome */
-        .css-1d391kg {display:none;}                      /* ancien spinner */
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# =============================================================================
-# 1. PARAMÈTRES DU TIRAGE
-# =============================================================================
+# ───────────────────────── PARAMÈTRES DU TIRAGE ────────────────────────────
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
 SD_MULT            = {"letters": 2.0, "phons": 2.0,
@@ -55,12 +27,9 @@ MAX_TRY_TAG     = 1_000
 MAX_TRY_FULL    = 1_000
 rng             = random.Random()
 
-NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS  = ["PAIN", "EAU"]
+NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
 
-# =============================================================================
-# 2. OUTILS DIVERS
-# =============================================================================
+# ───────────────────── OUTILS (conversion, shuffle, etc.) ──────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
@@ -73,13 +42,11 @@ def to_float(s: pd.Series) -> pd.Series:
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:
+def cat_code(tag: str) -> int:     # -1 = LOW ; 1 = HIGH
     return -1 if "LOW" in tag else 1
 
-# =============================================================================
-# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
-# =============================================================================
-@st.cache_data(show_spinner=False)   # on gère le spinner manuellement
+# ────────────────── CHARGEMENT EXCEL & TIRAGE DES 80 MOTS ──────────────────
+@st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
@@ -168,63 +135,66 @@ def build_sheet() -> pd.DataFrame:
             return df[order]
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
-# =============================================================================
-# 4. PAGE HTML / JS (string.Template pour éviter les problèmes d’accolades)
-# =============================================================================
+# ─────────────────── G gabarit HTML/JS : plein écran noir ──────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"/>
 <style>
-/* ——— plein écran noir, texte blanc ——— */
 html,body{
-  height:100%;width:100%;
-  margin:0;padding:0;overflow:hidden;
+  height:100%;width:100%;margin:0;padding:0;overflow:hidden;
   background:#000;color:#fff;
-  display:flex;flex-direction:column;
-  align-items:center;justify-content:center;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
   font-family:'Courier New',monospace;
 }
-/* mot / masque */
-#scr{
-  font-size:7vw;     /* s’adapte à la taille de la fenêtre */
-  user-select:none;
-  color:#fff;
-}
-/* zone de réponse */
+#scr{font-size:7vw;user-select:none;color:#fff;text-align:center;}
 #ans{
-  display:none;
-  font-size:5vw;
-  width:60%;
-  text-align:center;
-  background:#000;
-  color:#fff;
-  border:none;
-  border-bottom:3px solid #fff;
-  outline:none;
-  caret-color:#fff;
+  display:none;font-size:5vw;width:60%;text-align:center;
+  background:#000;color:#fff;border:none;border-bottom:3px solid #fff;
+  outline:none;caret-color:#fff;
 }
-::selection{background:#444;color:#fff}
+#intro{
+  position:fixed;inset:0;background:#000;color:#fff;z-index:10;
+  display:flex;align-items:center;justify-content:center;
+  font-size:5vw;text-align:center;
+}
 </style>
 </head>
 
 <body tabindex="0">
+<div id="intro">Appuyez sur la barre Espace pour commencer</div>
 <div id="scr"></div>
 <input id="ans" autocomplete="off"/>
 
 <script>
-/* ————————————————— paramètres transmis par Streamlit ————————————————— */
 const WORDS = $WORDS;
 const CYCLE = $CYCLE;
 const START = $START;
 const STEP  = $STEP;
 
-/* ————————————————— logique expérimentale ————————————————— */
 let trial = 0;
 const results = [];
 const scr = document.getElementById("scr");
 const ans = document.getElementById("ans");
+const intro = document.getElementById("intro");
 
+/* ——————————————— démarrage / plein écran ——————————————— */
+function launch(){
+  intro.style.display="none";
+  if(document.documentElement.requestFullscreen){
+      document.documentElement.requestFullscreen().catch(()=>{});
+  }
+  nextTrial();
+}
+window.addEventListener("keydown", function start(e){
+  if(e.code==="Space"){
+    e.preventDefault();
+    window.removeEventListener("keydown", start);
+    launch();
+  }
+});
+
+/* ——————————————— déroulement d’un essai ——————————————— */
 function nextTrial(){
   if(trial >= WORDS.length){ endExperiment(); return; }
 
@@ -273,119 +243,59 @@ function nextTrial(){
   window.addEventListener("keydown", onSpace);
 }
 
+/* ——————————————— fin de l’expérience ——————————————— */
 function endExperiment(){
-  scr.style.fontSize = "5vw";
-  scr.textContent = $END_MSG;
-  $DOWNLOAD
+  scr.style.fontSize="5vw";
+  scr.textContent = "Merci !";
+  const csv = ["word;rt_ms;response",
+               ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download = "results.csv";
+  a.textContent = "Télécharger les résultats";
+  a.style.fontSize="32px";
+  a.style.marginTop="30px";
+  document.body.appendChild(a);
 }
-
-/* première trial et focus clavier */
-window.addEventListener("load", ()=>{
-  document.body.focus();
-  nextTrial();
-});
 </script>
 </body>
 </html>
 """)
 
-def experiment_html(words, with_download=True,
-                    cycle_ms=350, start_ms=14, step_ms=14):
-    """Construit la page HTML/JS pour la phase demandée."""
-    download_js = ""
-    if with_download:
-        download_js = r"""
-const csv = ["word;rt_ms;response",
-             ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)].join("\n");
-const a = document.createElement("a");
-a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-a.download = "results.csv";
-a.textContent = "Télécharger les résultats";
-a.style.fontSize = "32px";
-a.style.marginTop = "30px";
-document.body.appendChild(a);"""
-    # doubler les $ éventuels dans download_js pour la substitution Template
-    download_js = download_js.replace("$", "$$")
-
-    html = HTML_TPL.substitute(
+def experiment_html(words, cycle_ms=350, start_ms=14, step_ms=14):
+    """Produit la page HTML/JS toute prête pour les 80 essais."""
+    return HTML_TPL.substitute(
         WORDS=json.dumps(words),
         CYCLE=cycle_ms,
         START=start_ms,
-        STEP=step_ms,
-        END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=download_js
-    )
-    return html
-
-# =============================================================================
-# 5. GESTION DE LA NAVIGATION
-# =============================================================================
-if "page" not in st.session_state:             st.session_state.page = "intro"
-if "tirage_en_cours" not in st.session_state:  st.session_state.tirage_en_cours = False
-if "tirage_ok"      not in st.session_state:   st.session_state.tirage_ok      = False
-
-# ─────────────────────────── PAGE INTRO ─────────────────────────────────────
-if st.session_state.page == "intro":
-    st.title("Tâche de reconnaissance de mots")
-
-    st.markdown(
-        """
-**Principe**  
-Des mots seront présentés très brièvement à l’écran, immédiatement
-suivis d’un masque (suite de dièses).
-
-**Votre tâche**  
-• Fixez votre regard au centre de l’écran.  
-• Dès que vous reconnaissez un mot, appuyez sur la barre **Espace**.  
-• Tapez ensuite le mot (accents / pluriels) et validez avec **Entrée**.
-
-**Déroulement**  
-1. Une courte phase d’entraînement (2 mots).  
-2. Le test principal (80 mots tirés au sort).
-        """
+        STEP=step_ms
     )
 
-    # --------   déclenche AUTOMATIQUEMENT le tirage la première fois   -------
-    if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
-        st.session_state.tirage_en_cours = True
-        do_rerun()
+# ───────────────────────────  Lancement Streamlit ──────────────────────────
+st.set_page_config(page_title="Expérience 3", layout="wide",
+                   initial_sidebar_state="collapsed")
 
-    # --------------------- TIRAGE EN COURS (spinner) -------------------------
-    if st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
-        with st.spinner("Tirage aléatoire des 80 mots…"):
-            tirage_df = build_sheet()
-            mots = tirage_df["ortho"].tolist(); random.shuffle(mots)
-            st.session_state.tirage_df  = tirage_df
-            st.session_state.stimuli    = mots
-            st.session_state.tirage_en_cours = False
-            st.session_state.tirage_ok  = True
-        st.success("Tirage terminé !")
+# masque la chrome Streamlit (mais on reste dans la web-app)
+st.markdown(
+    """
+    <style>
+        body, .stApp {background:#000 !important; color:#fff !important;}
+        #MainMenu, header, footer {visibility:hidden;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    # --------------------- BOUTON ACTIF QUAND TIRAGE OK ----------------------
-    if st.session_state.tirage_ok:
-        if st.button("Commencer la familiarisation"):
-            st.session_state.page = "fam"
-            do_rerun()
+st.title("Chargement des stimuli…")
 
-# ───────────────────────── PAGE FAMILIARISATION ────────────────────────────
-elif st.session_state.page == "fam":
-    st.header("Familiarisation (2 mots)")
-    st.markdown("Appuyez sur **Espace** dès que le mot apparaît, "
-                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
-    components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False),
-        height=650, scrolling=False
-    )
-    st.divider()
-    if st.button("Passer au test principal"):
-        st.session_state.page = "exp"; do_rerun()
+with st.spinner("Tirage aléatoire des 80 mots…"):
+    tirage_df = build_sheet()
+    mots = tirage_df["ortho"].tolist()
+    random.shuffle(mots)
 
-# ────────────────────────── PAGE TEST PRINCIPAL ────────────────────────────
-elif st.session_state.page == "exp":
-    st.header("Test principal (80 mots)")
-    with st.expander("Aperçu des statistiques du tirage"):
-        st.dataframe(st.session_state.tirage_df.head())
-    components.v1.html(
-        experiment_html(st.session_state.stimuli, with_download=True),
-        height=650, scrolling=False
-    )
+# Le composant HTML occupe tout ce qui reste de la fenêtre Streamlit
+components.v1.html(
+    experiment_html(mots),
+    height=800,   # valeur arbitraire : le composant passe de toute façon en plein écran
+    scrolling=False
+)
