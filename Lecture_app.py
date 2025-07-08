@@ -209,7 +209,7 @@ def build_sheet() -> pd.DataFrame:
     st.stop()
 
 
-# ═════════════════ HTML – test 60 Hz (corrigé) ═════════════════════════════
+# ═════════════════ HTML – test 60 Hz (id ajouté) ═══════════════════════════
 TEST60_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -221,33 +221,39 @@ display:flex;flex-direction:column;align-items:center;justify-content:center;tex
 <div id="res">--</div><button id="go">Démarrer</button>
 
 <script>
-const res=document.getElementById("res");
-const btn=document.getElementById("go");
+const res = document.getElementById("res");
+const btn = document.getElementById("go");
 
 function sendToStreamlit(value){
+  // identifiant de l'iframe qui héberge le composant
+  const id = window.frameElement.id;
   window.parent.postMessage(
-    {isStreamlitMessage:true, type:"streamlit:setComponentValue", value:value},
+    {isStreamlitMessage:true, type:"streamlit:setComponentValue", id:id, value:value},
     "*"
   );
 }
 
-btn.onclick=()=>{
-  btn.disabled=true;
-  res.style.color="#fff";
-  res.textContent="Mesure en cours…";
-  let t=[],n=120;
+btn.onclick = () => {
+  btn.disabled = true;
+  res.style.color = "#fff";
+  res.textContent = "Mesure en cours…";
+
+  const t = [];
+  const n = 120;
+
   function step(k){
-      t.push(k);
-      if(t.length<n){ requestAnimationFrame(step); }
-      else{
-        const d=t.slice(1).map((v,i)=>v-t[i]);
-        const hz=1000/(d.reduce((a,b)=>a+b,0)/d.length);
-        res.textContent="≈ "+hz.toFixed(1)+" Hz";
-        const ok=hz>58 && hz<62;
-        res.style.color = ok ? "lime" : "red";
-        btn.disabled=false;
-        if(ok){ sendToStreamlit("ok"); }
-      }
+    t.push(k);
+    if (t.length < n){
+      requestAnimationFrame(step);
+    } else {
+      const d  = t.slice(1).map((v,i) => v - t[i]);
+      const hz = 1000 / (d.reduce((a,b)=>a+b,0) / d.length);
+      res.textContent = "≈ " + hz.toFixed(1) + " Hz";
+      const ok = hz > 58 && hz < 62;
+      res.style.color  = ok ? "lime" : "red";
+      btn.disabled = false;
+      if (ok){ sendToStreamlit("ok"); }
+    }
   }
   requestAnimationFrame(step);
 };
@@ -255,7 +261,7 @@ btn.onclick=()=>{
 """
 
 
-# ═════════════════════════ navigation des pages ════════════════════════════
+# ═════════════════ navigation des pages ════════════════════════════════════
 # page 0 : test écran
 if st.session_state.page == "screen_test":
     st.write("### Vérification de l’écran (60 Hz requis)")
@@ -307,7 +313,7 @@ elif st.session_state.page == "fam":
     st.markdown("Appuyez sur **ESPACE** dès que le mot apparaît, "
                 "puis tapez-le et validez par **Entrée**.")
 
-    # Iframe de la tâche de familiarisation (à remplacer par votre HTML)
+    # Iframe de la tâche de familiarisation (exemple / placeholder)
     components.html(
         Template(open(__file__).read()).substitute(),
         height=650, scrolling=False
