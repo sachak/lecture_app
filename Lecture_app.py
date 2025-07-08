@@ -12,11 +12,9 @@ import random, pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-
 # ═════════════════ utilitaire « rerun » (compatible ≥ / < 1.26) ═══════════
 def do_rerun():
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
-
 
 # ═════════════════ configuration Streamlit ═══════════════════════════════
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -27,7 +25,6 @@ button:disabled {opacity:.45!important;cursor:not-allowed!important;}
 </style>
 """, unsafe_allow_html=True)
 
-
 # ═════════════════ état par défaut (session_state) ═══════════════════════
 for k, v in dict(page="screen_test",
                  hz_ok=False,            # test 60 Hz réussi ?
@@ -35,7 +32,6 @@ for k, v in dict(page="screen_test",
                  tirage_ok=False).items():
     st.session_state.setdefault(k, v)
 p = st.session_state                 # alias court
-
 
 # ═════════════════ section « tirage des 80 mots » ════════════════════════
 MEAN_FACTOR_OLDPLD = .45
@@ -50,24 +46,20 @@ rng              = random.Random()
 
 NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
 
-
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
-         .str.replace(r"[ ,\u00a0]", "", regex=True)
+         .str.replace(r"[ ,\u00a0]", "", regex=True)      # insécables + virgules
          .str.replace(",", ".",  regex=False),
         errors="coerce"
     )
-
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1,
                      random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-
 def cat_code(tag: str) -> int:        # –1 pour LOW, +1 pour HIGH
     return -1 if "LOW" in tag else 1
-
 
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
@@ -107,7 +99,6 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
-
 def masks(df, st_) -> dict[str, pd.Series]:
     return dict(
         LOW_OLD  = df.old20 < st_["m_old20"] - st_["sd_old20"],
@@ -115,7 +106,6 @@ def masks(df, st_) -> dict[str, pd.Series]:
         LOW_PLD  = df.pld20 < st_["m_pld20"] - st_["sd_pld20"],
         HIGH_PLD = df.pld20 > st_["m_pld20"] + st_["sd_pld20"],
     )
-
 
 def sd_ok(sub, st_, fq) -> bool:
     return (
@@ -126,7 +116,6 @@ def sd_ok(sub, st_, fq) -> bool:
         all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq)
     )
 
-
 def mean_lp_ok(s, st_) -> bool:
     return (
         abs(s.nblettres.mean() - st_["m_nblettres"])
@@ -134,7 +123,6 @@ def mean_lp_ok(s, st_) -> bool:
         abs(s.nbphons.mean()  - st_["m_nbphons"])
             <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
     )
-
 
 def pick_five(tag, feuille, used, F):
     df, st_ = F[feuille]["df"], F[feuille]["stats"]
@@ -171,7 +159,6 @@ def pick_five(tag, feuille, used, F):
         return samp
     return None
 
-
 def build_sheet() -> pd.DataFrame:
     F        = load_sheets()
     all_freq = F["all_freq_cols"]
@@ -201,7 +188,6 @@ def build_sheet() -> pd.DataFrame:
             return df[order]
 
     st.error("Impossible de générer la liste."); st.stop()
-
 
 # ═════════════════ test 60 Hz – HTML / JS (iframe) ═══════════════════════
 TEST60_HTML = r"""
@@ -233,19 +219,20 @@ Streamlit.setComponentReady();
 </script></body></html>
 """
 
-
 # ═════════════════ fonction de navigation simple ═════════════════════════
 def go(page: str):
     p.page = page
     do_rerun()
 
-
-# ═════════════════========= PAGES =========═══════════════════════════════
+# ═════════════════========== PAGES =======================================
 # 0. — test écran 60 Hz
 if p.page == "screen_test":
     st.subheader("1. Vérification (facultative) de la fréquence d’écran")
 
-    hz_val = components.html(TEST60_HTML, height=600, scrolling=False)
+    # clé fixe → conservation de la valeur renvoyée entre deux reruns
+    hz_val = components.html(TEST60_HTML, key="hz_test",
+                             height=600, scrolling=False)
+
     if hz_val == "ok":                           # la JS vient de renvoyer « ok »
         p.hz_ok = True                           # mémorisé pour la session
 
