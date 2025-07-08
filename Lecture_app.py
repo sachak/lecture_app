@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – version « tirage pendant la page d’intro »
+EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
 • Familiarisation : 2 mots fixes (PAIN, EAU)
 • Test            : 4 × 20 mots (5 par feuille × 4 feuilles, tirage contraint)
 
@@ -12,7 +12,7 @@ Exécution : streamlit run exp3.py
 from __future__ import annotations
 
 # ───────────────────────────── IMPORTS ────────────────────────────────────── #
-import json, random, threading
+import json, random
 from pathlib import Path
 
 import pandas as pd
@@ -54,6 +54,7 @@ PRACTICE_WORDS = ["PAIN", "EAU"]      # phase de familiarisation (2 mots)
 # 2.  OUTILS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
+    """Convertit proprement les colonnes numériques (virgule → point, etc.)."""
     return pd.to_numeric(
         s.astype(str)
          .str.replace(" ",  "", regex=False)
@@ -63,16 +64,19 @@ def to_float(s: pd.Series) -> pd.Series:
     )
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
+    """Retourne le DataFrame mélangé (shuffle)."""
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
 def cat_code(tag: str) -> int:
+    """Code catégoriel : -1 pour LOW, +1 pour HIGH, 0 sinon (OLD vs PLD)."""
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
-# 3.  CHARGEMENT D’EXCEL (cache GLOBAL) + TIRAGE DES 80 MOTS (par SESSION)
+# 3.  CHARGEMENT EXCEL (cache GLOBAL) + TIRAGE (par SESSION)
 # =============================================================================
 @st.cache_data(show_spinner="Chargement du classeur Excel…")
 def load_sheets() -> dict[str, dict]:
+    """Charge les 4 feuilles du classeur et prépare les stats nécessaires."""
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable.")
         st.stop()
@@ -115,6 +119,7 @@ def load_sheets() -> dict[str, dict]:
 
 
 def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
+    """Masques booléens pour LOW/HIGH OLD/PLD dans une feuille donnée."""
     return {
         "LOW_OLD" : df.old20 <  st_["m_old20"] - st_["sd_old20"],
         "HIGH_OLD": df.old20 >  st_["m_old20"] + st_["sd_old20"],
@@ -123,6 +128,7 @@ def masks(df: pd.DataFrame, st_: dict) -> dict[str, pd.Series]:
     }
 
 def sd_ok(sub: pd.DataFrame, st_: dict, fq_cols: list[str]) -> bool:
+    """Contraintes d’écarts-types (longueur, phonologie, fréquences…)."""
     return (
         sub.nblettres.std(ddof=0) <= st_["sd_nblettres"] * SD_MULTIPLIER["letters"] and
         sub.nbphons.std(ddof=0)   <= st_["sd_nbphons"]   * SD_MULTIPLIER["phons"]   and
@@ -132,14 +138,16 @@ def sd_ok(sub: pd.DataFrame, st_: dict, fq_cols: list[str]) -> bool:
     )
 
 def mean_lp_ok(sub: pd.DataFrame, st_: dict) -> bool:
+    """Contraintes sur les moyennes nblettres / nbphons."""
     return (
         abs(sub.nblettres.mean() - st_["m_nblettres"]) <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
         abs(sub.nbphons.mean()   - st_["m_nbphons"])   <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
     )
 
 def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
+    """Essaye de sélectionner 5 mots satisfaisant les contraintes pour un tag donné."""
     df   = FEUILLES[feuille]["df"]
-    st_  = FEUILLES[feille]["stats"]
+    st_  = FEUILLES[feuille]["stats"]      # ← CORRECTION ici (feuille, pas feille)
     fqs  = FEUILLES[feuille]["freq_cols"]
     pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
@@ -166,7 +174,7 @@ def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame 
     return None
 
 def build_sheet() -> pd.DataFrame:
-    """Génère la liste de 80 mots – un nouveau tirage à chaque session."""
+    """Génère la liste des 80 mots – nouveau tirage à chaque session."""
     FEUILLES = load_sheets()
     all_freq_cols = FEUILLES["all_freq_cols"]
 
@@ -206,8 +214,8 @@ def experiment_html(words: list[str],
                     start_ms: int = 14,
                     step_ms:  int = 14) -> str:
     """
-    Génère la page HTML/JS autonome affichée via components.v1.html.
-    Si with_download=False, pas de fichier CSV en fin d’expérience.
+    Génère la page HTML/JS autonome pour Streamlit components.
+    Si with_download=False : pas de CSV final (phase d'entraînement).
     """
     download_js = ""
     end_message = "Merci !" if with_download else "Fin de l’entraînement"
@@ -351,7 +359,7 @@ nextTrial();
 
 
 # =============================================================================
-# 5.  GESTION DE LA NAVIGATION
+# 5.  NAVIGATION DANS L’APPLICATION
 # =============================================================================
 if "page" not in st.session_state:
     st.session_state.page = "intro"
@@ -359,6 +367,7 @@ if "page" not in st.session_state:
 # ──────────────────────────── PAGE INTRO ──────────────────────────────────── #
 if st.session_state.page == "intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
+
     st.markdown(
         """
 **Dans cette expérience, des mots vont vous être présentés brièvement à l’écran, suivis immédiatement d’un masque visuel.**  
@@ -367,7 +376,7 @@ Le mot et le masque alterneront plusieurs fois au cours de chaque essai.
 Votre tâche :  
 • Fixez votre regard au centre de l’écran.  
 • Dès que vous reconnaissez un mot, appuyez immédiatement sur la barre **Espace** avec l’index de votre main dominante.  
-• Tapez ensuite le mot que vous pensez avoir vu, attention aux accents et aux pluriels.  
+• Tapez ensuite le mot que vous pensez avoir vu (attention aux accents et aux pluriels).  
 • Vérifiez que vous avez bien écrit ce mot, puis appuyez sur **Entrée** pour passer au mot suivant.
 
 Avant de commencer :  
@@ -375,25 +384,19 @@ Vous effectuerez un court entraînement pour vous familiariser à la tâche. Ens
         """
     )
 
-    # ---------------------------------------------------------------
-    # Tirage AU MOMENT de la lecture de la page d’intro
-    # ---------------------------------------------------------------
+    # ------------- Tirage lancé PENDANT la lecture des consignes -------------
     if "tirage_df" not in st.session_state:
-        # La petite roue reste visible pendant le tirage
-        with st.spinner("Tirage aléatoire des 80 mots… veuillez patienter"):
-            tirage_df = build_sheet()
+        with st.spinner("En attente du tirage au sort de 80 mots…"):
+            tirage_df = build_sheet()                 # génération complète
             mots = tirage_df["ortho"].tolist()
             random.shuffle(mots)
 
-            st.session_state.tirage_df = tirage_df
+            st.session_state.tirage_df = tirage_df    # mémorisation
             st.session_state.stimuli   = mots
 
         st.success("Tirage terminé !")
-        st.write("")  # petite marge
 
-    # ----------------------------------------------------------------
-    # Le bouton n’est affiché que lorsque le tirage est terminé
-    # ----------------------------------------------------------------
+    # ------------------ Bouton activé une fois le tirage prêt -----------------
     if "tirage_df" in st.session_state:
         if st.button("Commencer la familiarisation"):
             st.session_state.page = "fam"
