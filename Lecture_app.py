@@ -7,7 +7,6 @@ Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
-
 import json, random
 from pathlib import Path
 from string import Template
@@ -185,6 +184,7 @@ const WORDS = $WORDS;
 const CYCLE = $CYCLE;
 const START = $START;
 const STEP  = $STEP;
+const CROSS = $CROSS;   // durée d’affichage de la croix (ms)
 
 let trial = 0;
 let results = [];
@@ -193,7 +193,14 @@ const ans = document.getElementById("ans");
 
 function nextTrial(){
   if(trial >= WORDS.length){ endExperiment(); return; }
-  const w = WORDS[trial];
+
+  /* ─────────── Affichage de la croix de fixation ─────────── */
+  scr.textContent = "+";
+  setTimeout(()=>runWordTrial(WORDS[trial]), CROSS);
+}
+
+/* Fonction principale correspondant à la présentation d’un mot */
+function runWordTrial(w){
   const mask = "#".repeat(w.length);
 
   let showDur = START;
@@ -218,6 +225,7 @@ function nextTrial(){
     }, showDur);
   })();
 
+  /* Appui barre espace */
   function onSpace(e){
     if(e.code === "Space" && active){
       active = false;
@@ -232,7 +240,8 @@ function nextTrial(){
           results.push({word:w, rt_ms:rt, response:ans.value.trim()});
           ans.removeEventListener("keydown", onEnter);
           ans.style.display = "none";
-          trial += 1; nextTrial();
+          trial += 1;
+          nextTrial();
         }
       });
     }
@@ -251,8 +260,9 @@ nextTrial();
 </html>
 """)
 
-def experiment_html(words, with_download=True,
-                    cycle_ms=350, start_ms=14, step_ms=14):
+def experiment_html(words, *, with_download=True,
+                    cross_ms=500, cycle_ms=350, start_ms=14, step_ms=14):
+    """Fabrique la page HTML/JS de l’expérience."""
     download_js = ""
     if with_download:
         download_js = r"""
@@ -273,6 +283,7 @@ document.body.appendChild(a);"""
         CYCLE=cycle_ms,
         START=start_ms,
         STEP=step_ms,
+        CROSS=cross_ms,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
         DOWNLOAD=download_js
     )
@@ -295,7 +306,7 @@ if st.session_state.page == "intro":
 Des mots seront présentés très brièvement à l’écran, immédiatement suivis d’un masque (suite de dièses).
 
 **Votre tâche**  
-• Fixez votre regard au centre de l’écran.  
+• Fixez votre regard sur la croix **+** affichée au centre de l’écran.  
 • Dès que vous reconnaissez un mot, appuyez sur la barre **Espace**.  
 • Tapez ensuite le mot (accents / pluriels) et validez avec **Entrée**.
 
@@ -330,10 +341,10 @@ Des mots seront présentés très brièvement à l’écran, immédiatement suiv
 # ───────────────────────── PAGE FAMILIARISATION ────────────────────────────
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
-    st.markdown("Appuyez sur **Espace** dès que le mot apparaît, "
+    st.markdown("Fixez la croix **+**, appuyez sur **Espace** dès que le mot apparaît, "
                 "puis tapez ce que vous avez lu et validez avec **Entrée**.")
     components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False),
+        experiment_html(PRACTICE_WORDS, with_download=False, cross_ms=500),
         height=650, scrolling=False
     )
     st.divider()
@@ -346,6 +357,6 @@ elif st.session_state.page == "exp":
     with st.expander("Aperçu des statistiques du tirage"):
         st.dataframe(st.session_state.tirage_df.head())
     components.v1.html(
-        experiment_html(st.session_state.stimuli, with_download=True),
+        experiment_html(st.session_state.stimuli, with_download=True, cross_ms=500),
         height=650, scrolling=False
     )
