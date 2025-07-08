@@ -8,14 +8,21 @@ Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
 
-# ───────────────────────────── IMPORTS ──────────────────────────────────────
 import json, random
 from pathlib import Path
-from string import Template                # pour l’HTML
+from string import Template
 
 import pandas as pd
 import streamlit as st
 from streamlit import components
+
+# ────────────────────────── OUTIL RERUN COMPATIBLE ─────────────────────────
+def do_rerun():
+    """Force un rerun quel que soit le nom de la fonction dans la version."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:                              # anciennes versions
+        st.experimental_rerun()
 
 # ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -47,7 +54,7 @@ NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 # =============================================================================
-# 2. OUTILS
+# 2. OUTILS DIVERS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -67,7 +74,7 @@ def cat_code(tag: str) -> int:
 # =============================================================================
 # 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
 # =============================================================================
-@st.cache_data(show_spinner=False)   # spinner géré manuellement
+@st.cache_data(show_spinner=False)   # on gère le spinner manuellement
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
@@ -156,9 +163,9 @@ def build_sheet() -> pd.DataFrame:
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
 # =============================================================================
-# 4. HTML / JS (aucune accolade à doubler, on utilisera string.Template)
+# 4. PAGE HTML / JS (string.Template pour éviter les problèmes d’accolades)
 # =============================================================================
-HTML_TEMPLATE = Template(r"""
+HTML_TPL = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"/>
@@ -186,7 +193,6 @@ const ans = document.getElementById("ans");
 
 function nextTrial(){
   if(trial >= WORDS.length){ endExperiment(); return; }
-
   const w = WORDS[trial];
   const mask = "#".repeat(w.length);
 
@@ -216,23 +222,17 @@ function nextTrial(){
     if(e.code === "Space" && active){
       active = false;
       clearTimeout(tShow); clearTimeout(tHide);
-
       const rt = Math.round(performance.now() - t0);
       window.removeEventListener("keydown", onSpace);
-
       scr.textContent = "";
-      ans.style.display = "block";
-      ans.value = "";
-      ans.focus();
-
+      ans.style.display = "block"; ans.value = ""; ans.focus();
       ans.addEventListener("keydown", function onEnter(ev){
         if(ev.key === "Enter"){
           ev.preventDefault();
           results.push({word:w, rt_ms:rt, response:ans.value.trim()});
           ans.removeEventListener("keydown", onEnter);
           ans.style.display = "none";
-          trial += 1;
-          nextTrial();
+          trial += 1; nextTrial();
         }
       });
     }
@@ -242,10 +242,9 @@ function nextTrial(){
 
 function endExperiment(){
   scr.style.fontSize = "40px";
-  scr.textContent = $END_MESSAGE;
-  $DOWNLOAD_JS
+  scr.textContent = $END_MSG;
+  $DOWNLOAD
 }
-
 nextTrial();
 </script>
 </body>
@@ -254,7 +253,6 @@ nextTrial();
 
 def experiment_html(words, with_download=True,
                     cycle_ms=350, start_ms=14, step_ms=14):
-    # bloc JS pour téléchargement CSV
     download_js = ""
     if with_download:
         download_js = r"""
@@ -267,23 +265,23 @@ a.textContent = "Télécharger les résultats";
 a.style.fontSize = "32px";
 a.style.marginTop = "30px";
 document.body.appendChild(a);"""
-    # pour éviter toute tentative de substitution $ dans le JS ci-dessus
+    # doubler les $ éventuels dans download_js pour la substitution Template
     download_js = download_js.replace("$", "$$")
 
-    html = HTML_TEMPLATE.substitute(
+    html = HTML_TPL.substitute(
         WORDS=json.dumps(words),
         CYCLE=cycle_ms,
         START=start_ms,
         STEP=step_ms,
-        END_MESSAGE=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD_JS=download_js
+        END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
+        DOWNLOAD=download_js
     )
     return html
 
 # =============================================================================
 # 5. GESTION DE LA NAVIGATION
 # =============================================================================
-if "page" not in st.session_state: st.session_state.page = "intro"
+if "page" not in st.session_state:        st.session_state.page = "intro"
 if "tirage_en_cours" not in st.session_state: st.session_state.tirage_en_cours = False
 if "tirage_ok"      not in st.session_state: st.session_state.tirage_ok      = False
 
@@ -294,24 +292,23 @@ if st.session_state.page == "intro":
     st.markdown(
         """
 **Principe**  
-Des mots seront présentés très brièvement à l’écran, immédiatement suivis d’un masque (suite de dièses).  
-Le mot et le masque alterneront plusieurs fois lors de chaque essai.
+Des mots seront présentés très brièvement à l’écran, immédiatement suivis d’un masque (suite de dièses).
 
 **Votre tâche**  
 • Fixez votre regard au centre de l’écran.  
 • Dès que vous reconnaissez un mot, appuyez sur la barre **Espace**.  
-• Tapez ensuite le mot que vous pensez avoir vu (accents / pluriels), puis appuyez sur **Entrée**.
+• Tapez ensuite le mot (accents / pluriels) et validez avec **Entrée**.
 
 **Déroulement**  
 1. Une courte phase d’entraînement (2 mots).  
-2. Le test principal (80 mots présentés dans un ordre aléatoire).
+2. Le test principal (80 mots tirés au sort).
         """
     )
 
     # --------   déclenche AUTOMATIQUEMENT le tirage la première fois   -------
     if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
         st.session_state.tirage_en_cours = True
-        st.experimental_rerun()
+        do_rerun()
 
     # --------------------- TIRAGE EN COURS (spinner) -------------------------
     if st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
@@ -328,7 +325,7 @@ Le mot et le masque alterneront plusieurs fois lors de chaque essai.
     if st.session_state.tirage_ok:
         if st.button("Commencer la familiarisation"):
             st.session_state.page = "fam"
-            st.rerun()
+            do_rerun()
 
 # ───────────────────────── PAGE FAMILIARISATION ────────────────────────────
 elif st.session_state.page == "fam":
@@ -341,7 +338,7 @@ elif st.session_state.page == "fam":
     )
     st.divider()
     if st.button("Passer au test principal"):
-        st.session_state.page = "exp"; st.rerun()
+        st.session_state.page = "exp"; do_rerun()
 
 # ────────────────────────── PAGE TEST PRINCIPAL ────────────────────────────
 elif st.session_state.page == "exp":
