@@ -26,7 +26,7 @@ st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
-.css-1d391kg {display:none;}          /* ancien spinner                       */
+.css-1d391kg {display:none;}  /* ancien spinner */
 </style>""", unsafe_allow_html=True)
 
 # =============================================================================
@@ -47,7 +47,7 @@ NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS = ["PAIN", "EAU"]
 
 # =============================================================================
-# 2. OUTILS DIVERS
+# 2. OUTILS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s.astype(str)
@@ -70,12 +70,12 @@ def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
     xls = pd.ExcelFile(XLSX)
-    sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
-    if len(sheet_names) != 4:
+    sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
+    if len(sheets) != 4:
         st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
 
     feuilles, all_freq_cols = {}, set()
-    for sh in sheet_names:
+    for sh in sheets:
         df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
         freq_cols = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(freq_cols)
@@ -161,7 +161,7 @@ HTML_TPL = Template(r"""
 html,body{
     height:100%;
     margin:0;
-    background:#000;                     /* fond noir                          */
+    background:#000;
     display:flex;
     flex-direction:column;
     align-items:center;
@@ -170,7 +170,7 @@ html,body{
 }
 #scr{
     font-size:60px;
-    color:#fff;                          /* texte blanc                        */
+    color:#fff;
     user-select:none;
 }
 #ans{
@@ -256,7 +256,7 @@ $STARTER
 def experiment_html(words, *, with_download=True,
                     cycle_ms=350, start_ms=14, step_ms=14,
                     fullscreen=False):
-    # bloc téléchargement ----------------------------------------------------
+    # téléchargement ---------------------------------------------------------
     download_js = ""
     if with_download:
         download_js = r"""
@@ -269,7 +269,7 @@ a.textContent = "Télécharger les résultats";
 a.style.fontSize = "32px";
 a.style.marginTop = "30px";
 document.body.appendChild(a);"""
-    download_js = download_js.replace("$","$$")  # échapper les $
+    download_js = download_js.replace("$","$$")
 
     # démarrage --------------------------------------------------------------
     if fullscreen:
@@ -286,7 +286,7 @@ window.addEventListener("keydown", firstKey);"""
     else:
         starter_js = "nextTrial();"
 
-    html = HTML_TPL.substitute(
+    return HTML_TPL.substitute(
         WORDS=json.dumps(words),
         CYCLE=cycle_ms,
         START=start_ms,
@@ -295,24 +295,20 @@ window.addEventListener("keydown", firstKey);"""
         DOWNLOAD=download_js,
         STARTER=starter_js
     )
-    return html
 
 # =============================================================================
-# 5. NAVIGATION / ÉTATS STREAMLIT
+# 5. NAVIGATION STREAMLIT
 # =============================================================================
-if "page"        not in st.session_state: st.session_state.page        = "intro"
-if "tirage_ok"   not in st.session_state: st.session_state.tirage_ok   = False
-if "tirage_run"  not in st.session_state: st.session_state.tirage_run  = False
-if "exp_started" not in st.session_state: st.session_state.exp_started = False
+if "page" not in st.session_state:       st.session_state.page       = "intro"
+if "tirage_ok" not in st.session_state:  st.session_state.tirage_ok  = False
+if "tirage_run" not in st.session_state: st.session_state.tirage_run = False
 
 # ─────────────────────────── PAGE INTRO ────────────────────────────────────
 if st.session_state.page == "intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown("""
-**Principe**  
-Des mots sont présentés très brièvement, suivis d’un masque (suite de “#”).
+Des mots apparaîtront très brièvement puis seront masqués (suite de “#”).
 
-**Votre tâche**  
 • Fixez le centre de l’écran.  
 • Dès que vous reconnaissez un mot, appuyez sur **ESPACE**.  
 • Tapez ensuite le mot puis **Entrée**.
@@ -320,7 +316,7 @@ Des mots sont présentés très brièvement, suivis d’un masque (suite de “#
 1. Entraînement (2 mots)  2. Test principal (80 mots)
 """)
 
-    # Tirage automatique
+    # tirage automatique
     if not st.session_state.tirage_run and not st.session_state.tirage_ok:
         st.session_state.tirage_run = True; do_rerun()
 
@@ -348,24 +344,13 @@ elif st.session_state.page == "fam":
     )
     st.divider()
     if st.button("Passer au test principal"):
-        st.session_state.page = "exp"
-        st.session_state.exp_started = False
-        do_rerun()
+        st.session_state.page = "exp"; do_rerun()
 
-# ────────────────────────── PAGE TEST PRINCIPAL ────────────────────────────
+# ────────────────────────── PAGE TEST DIRECT ───────────────────────────────
 elif st.session_state.page == "exp":
-    if not st.session_state.exp_started:   # écran d’attente
-        st.header("Test principal : 80 mots")
-        with st.expander("Aperçu des statistiques du tirage"):
-            st.dataframe(st.session_state.tirage_df.head())
-        st.markdown("Quand vous êtes prêt·e, cliquez sur **Commencer le test**. "
-                    "La fenêtre passera alors en plein écran.")
-        if st.button("Commencer le test"):
-            st.session_state.exp_started = True; do_rerun()
-    else:                                  # test lui-même
-        components.v1.html(
-            experiment_html(st.session_state.stimuli,
-                            with_download=True,
-                            fullscreen=True),
-            height=700, scrolling=False
-        )
+    components.v1.html(
+        experiment_html(st.session_state.stimuli,
+                        with_download=True,
+                        fullscreen=True),
+        height=700, scrolling=False
+    )
