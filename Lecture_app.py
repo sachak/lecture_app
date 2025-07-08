@@ -16,7 +16,6 @@ from streamlit import components
 
 # ────────────────────────── OUTIL RERUN ────────────────────────────────────
 def do_rerun():
-    st.session_state.rerun = True   # « drapeau » pour Streamlit ≥ 1.25
     if hasattr(st, "rerun"):
         st.rerun()
     else:
@@ -27,7 +26,7 @@ st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
-.css-1d391kg {display:none;}          /* ancien spinner Streamlit           */
+.css-1d391kg {display:none;}          /* ancien spinner                       */
 </style>""", unsafe_allow_html=True)
 
 # =============================================================================
@@ -60,7 +59,7 @@ def to_float(s: pd.Series) -> pd.Series:
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:    # -1 = LOW ; +1 = HIGH
+def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
 # =============================================================================
@@ -80,6 +79,7 @@ def load_sheets() -> dict[str, dict]:
         df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
         freq_cols = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(freq_cols)
+
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {sh}"); st.stop()
@@ -89,8 +89,8 @@ def load_sheets() -> dict[str, dict]:
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
 
-        stats = {f"m_{c}": df[c].mean()           for c in ("old20","pld20","nblettres","nbphons")}
-        stats |= {f"sd_{c}": df[c].std(ddof=0)    for c in ("old20","pld20","nblettres","nbphons") + tuple(freq_cols)}
+        stats = {f"m_{c}": df[c].mean()        for c in ("old20","pld20","nblettres","nbphons")}
+        stats |= {f"sd_{c}": df[c].std(ddof=0) for c in ("old20","pld20","nblettres","nbphons") + tuple(freq_cols)}
         feuilles[sh] = {"df": df, "stats": stats, "freq_cols": freq_cols}
 
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
@@ -115,8 +115,8 @@ def mean_lp_ok(sub, st_):
 
 def pick_five(tag, feuille, used, F):
     df, st_ = F[feuille]["df"], F[feuille]["stats"]
-    fqs = F[feuille]["freq_cols"]
-    pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
+    fqs     = F[feuille]["freq_cols"]
+    pool    = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG: return None
     for _ in range(MAX_TRY_TAG):
         samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0,1_000_000)).copy()
@@ -158,10 +158,27 @@ HTML_TPL = Template(r"""
 <html lang="fr">
 <head><meta charset="utf-8"/>
 <style>
-html,body{height:100%;margin:0;display:flex;flex-direction:column;
-          align-items:center;justify-content:center;font-family:'Courier New',monospace}
-#scr{font-size:60px;user-select:none}
-#ans{display:none;font-size:48px;width:60%;text-align:center}
+html,body{
+    height:100%;
+    margin:0;
+    background:#000;                     /* fond noir                          */
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    font-family:'Courier New',monospace;
+}
+#scr{
+    font-size:60px;
+    color:#fff;                          /* texte blanc                        */
+    user-select:none;
+}
+#ans{
+    display:none;
+    font-size:48px;
+    width:60%;
+    text-align:center;
+}
 </style>
 </head>
 <body tabindex="0">
@@ -230,7 +247,7 @@ function endExperiment(){
   scr.textContent = $END_MSG;
   $DOWNLOAD
 }
-$STARTER              /* ► code qui lance l’expérience               */
+$STARTER
 </script>
 </body>
 </html>
@@ -239,8 +256,7 @@ $STARTER              /* ► code qui lance l’expérience               */
 def experiment_html(words, *, with_download=True,
                     cycle_ms=350, start_ms=14, step_ms=14,
                     fullscreen=False):
-    """Construit la page HTML de l’expérience."""
-    # Bloc téléchargement (optionnel) -------------------------------------------------
+    # bloc téléchargement ----------------------------------------------------
     download_js = ""
     if with_download:
         download_js = r"""
@@ -253,9 +269,9 @@ a.textContent = "Télécharger les résultats";
 a.style.fontSize = "32px";
 a.style.marginTop = "30px";
 document.body.appendChild(a);"""
-    download_js = download_js.replace("$","$$")    # échapper les $
+    download_js = download_js.replace("$","$$")  # échapper les $
 
-    # Code de démarrage --------------------------------------------------------------
+    # démarrage --------------------------------------------------------------
     if fullscreen:
         starter_js = r"""
 scr.textContent = "Appuyez sur la barre ESPACE pour commencer";
@@ -304,7 +320,7 @@ Des mots sont présentés très brièvement, suivis d’un masque (suite de “#
 1. Entraînement (2 mots)  2. Test principal (80 mots)
 """)
 
-    # tirage automatique au premier affichage
+    # Tirage automatique
     if not st.session_state.tirage_run and not st.session_state.tirage_ok:
         st.session_state.tirage_run = True; do_rerun()
 
@@ -333,23 +349,20 @@ elif st.session_state.page == "fam":
     st.divider()
     if st.button("Passer au test principal"):
         st.session_state.page = "exp"
-        st.session_state.exp_started = False   # on n'a pas encore lancé le test
+        st.session_state.exp_started = False
         do_rerun()
 
 # ────────────────────────── PAGE TEST PRINCIPAL ────────────────────────────
 elif st.session_state.page == "exp":
-    # 1) écran d’attente + bouton
-    if not st.session_state.exp_started:
+    if not st.session_state.exp_started:   # écran d’attente
         st.header("Test principal : 80 mots")
         with st.expander("Aperçu des statistiques du tirage"):
             st.dataframe(st.session_state.tirage_df.head())
         st.markdown("Quand vous êtes prêt·e, cliquez sur **Commencer le test**. "
                     "La fenêtre passera alors en plein écran.")
         if st.button("Commencer le test"):
-            st.session_state.exp_started = True
-            do_rerun()
-    # 2) test proprement dit : on n’affiche plus que l’iframe
-    else:
+            st.session_state.exp_started = True; do_rerun()
+    else:                                  # test lui-même
         components.v1.html(
             experiment_html(st.session_state.stimuli,
                             with_download=True,
