@@ -23,19 +23,21 @@ st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
-.css-1d391kg {display:none;}         /* ancien spinner                      */
+.css-1d391kg {display:none;}          /* ancien spinner                      */
+button:disabled{opacity:0.45 !important;cursor:not-allowed !important;}
 </style>""", unsafe_allow_html=True)
 
-# =============================================================================
-# 0.  ETATS PERSISTANTS
-# =============================================================================
-if "page"            not in st.session_state: st.session_state.page            = "screen_test"
-if "tirage_ok"       not in st.session_state: st.session_state.tirage_ok       = False
-if "tirage_running"  not in st.session_state: st.session_state.tirage_running  = False
+# ----------------------------------------------------------------------------
+# 0.  ÉTATS SESSION
+# ----------------------------------------------------------------------------
+default_states = dict(page="screen_test", hz_ok=False,
+                      tirage_ok=False, tirage_running=False)
+for k, v in default_states.items():
+    st.session_state.setdefault(k, v)
 
-# =============================================================================
-# 1. PARAMÈTRES DU TIRAGE
-# =============================================================================
+# ----------------------------------------------------------------------------
+# 1. PARAMÈTRES DU TIRAGE (inchangés)
+# ----------------------------------------------------------------------------
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = {"letters": .68, "phons": .68}
 SD_MULT            = {"letters": 2, "phons": 2,
@@ -50,36 +52,36 @@ rng             = random.Random()
 NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS = ["PAIN", "EAU"]
 
-# =============================================================================
+# ----------------------------------------------------------------------------
 # 2. OUTILS DIVERS
-# =============================================================================
+# ----------------------------------------------------------------------------
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s.astype(str)
                            .str.replace(" ",  "", regex=False)
-                           .str.replace("\xa0","", regex=False)
+                           .str.replace("\u00a0","", regex=False)
                            .str.replace(",", ".", regex=False),
                          errors="coerce")
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:
+def cat_code(tag: str) -> int:  # -1 = LOW, +1 = HIGH
     return -1 if "LOW" in tag else 1
 
-# =============================================================================
-# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
-# =============================================================================
+# ----------------------------------------------------------------------------
+# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS  (identique aux versions précédentes)
+# ----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
     xls = pd.ExcelFile(XLSX)
-    sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
-    if len(sheets) != 4:
+    sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
+    if len(sheet_names) != 4:
         st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
 
     feuilles, all_freq_cols = {}, set()
-    for sh in sheets:
+    for sh in sheet_names:
         df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
         freq_cols = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(freq_cols)
@@ -100,6 +102,9 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
+# (les fonctions masks, sd_ok, mean_lp_ok, pick_five, build_sheet sont identiques
+#  → gardées telles quelles pour gagner de la place ici)
+# ----------------------------------------------------------------------------
 def masks(df, st_):
     return {"LOW_OLD":  df.old20 < st_["m_old20"] - st_["sd_old20"],
             "HIGH_OLD": df.old20 > st_["m_old20"] + st_["sd_old20"],
@@ -154,9 +159,9 @@ def build_sheet() -> pd.DataFrame:
             return df[order]
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
-# =============================================================================
-# 4.  HTML :  A) TEST 60 Hz  •  B) EXPERIENCE (rAF)
-# =============================================================================
+# ----------------------------------------------------------------------------
+# 4A.  HTML  –  TEST FRÉQUENCE (plus de bouton « Continuer »)
+# ----------------------------------------------------------------------------
 TEST60_HTML = r"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -166,56 +171,49 @@ html,body{height:100%;margin:0;background:#000;color:#fff;
           display:flex;flex-direction:column;align-items:center;justify-content:center;
           font-family:Arial,Helvetica,sans-serif;text-align:center}
 #res{font-size:48px;margin:30px 0}
-button{font-size:24px;padding:8px 20px}
+button{font-size:24px;padding:8px 28px}
 </style>
 </head>
 <body>
-<h2>Test de fréquence d’écran (cible&nbsp;: 60 Hz)</h2>
-<p>Cliquez sur « Démarrer ».<br/>Le programme mesure la fréquence réelle de votre moniteur.</p>
+<h2>Test de fréquence d’écran<br/>(cible&nbsp;: 60 Hz)</h2>
+<p>Cliquez sur « Démarrer ».<br>Le programme mesure la fréquence de votre moniteur.</p>
 <div id="res">--</div>
 <button id="start">Démarrer</button>
-<button id="go" disabled>Continuer</button>
 
 <script>
-const res = document.getElementById("res");
-document.getElementById("start").onclick = ()=>{
+const res=document.getElementById("res");
+document.getElementById("start").onclick=()=>{
   document.getElementById("start").disabled=true;
-  let times=[], n=150;
-  function step(t){
-    times.push(t);
-    if(times.length<n){ requestAnimationFrame(step); }
+  let t=[], n=150;
+  const step=k=>{
+    t.push(k); if(t.length<n){ requestAnimationFrame(step); }
     else{
-      let deltas=[];
-      for(let i=2;i<times.length;i++){ deltas.push(times[i]-times[i-1]); }
-      const mean = deltas.reduce((a,b)=>a+b,0)/deltas.length;
-      const hz   = 1000/mean;
-      res.textContent = `≈ ${hz.toFixed(1)} Hz`;
-      const ok = hz>58 && hz<62;
-      res.style.color = ok? "lime" : "red";
-      if(ok) document.getElementById("go").disabled=false;
+      let d=[]; for(let i=2;i<t.length;i++) d.push(t[i]-t[i-1]);
+      const mean=d.reduce((a,b)=>a+b,0)/d.length, hz=1000/mean;
+      res.textContent=`≈ ${hz.toFixed(1)} Hz`;
+      const ok=hz>58&&hz<62;
+      res.style.color=ok?"lime":"red";
       document.getElementById("start").disabled=false;
+      if(ok){ Streamlit.setComponentValue("ok"); }
     }
-  }
+  };
   requestAnimationFrame(step);
-};
-
-document.getElementById("go").onclick = ()=>{
-  window.parent.postMessage({passed:true},"*");
 };
 </script>
 </body>
 </html>
 """
 
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# 4B.  HTML  –  EXPÉRIENCE  (rAF)
+# ----------------------------------------------------------------------------
 EXP_HTML = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"/>
 <style>
-html,body{
-  height:100%;margin:0;background:#000;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;font-family:'Courier New',monospace}
+html,body{height:100%;margin:0;background:#000;display:flex;flex-direction:column;
+          align-items:center;justify-content:center;font-family:'Courier New',monospace}
 #scr{font-size:60px;color:#fff;user-select:none}
 #ans{display:none;font-size:48px;width:60%;text-align:center}
 </style>
@@ -226,46 +224,34 @@ html,body{
 <script>
 window.addEventListener("load",()=>document.body.focus());
 const WORDS   = $WORDS;
-const CYCLE_F = $CYCLE_F;   // frames «mot+masque»
-const START_F = $START_F;   // frames 1ᵉʳ affichage
-const STEP_F  = $STEP_F;    // +frames après chaque cycle
+const CYCLE_F = $CYCLE_F;
+const START_F = $START_F;
+const STEP_F  = $STEP_F;
 
-let trial = 0;
-let results = [];
-const scr = document.getElementById("scr");
-const ans = document.getElementById("ans");
+let trial=0;
+let results=[];
+const scr=document.getElementById("scr");
+const ans=document.getElementById("ans");
 
-function waitFrames(n, cb){      // attente n frames puis callback
-  let c = 0;
-  function step(){ if(c++>=n){ cb(); } else{ requestAnimationFrame(step);} }
-  requestAnimationFrame(step);
-}
-
-function present(){              // déroulement d’UN essai
+function waitFrames(n,cb){let c=0;function step(){if(c++>=n)cb();else requestAnimationFrame(step);}requestAnimationFrame(step);}
+function present(){
   if(trial>=WORDS.length){ fin(); return; }
-  const w = WORDS[trial];
-  const mask = "#".repeat(w.length);
-  let showF = START_F;
-  let hideF = CYCLE_F - showF;
-  const t0 = performance.now();
-  let active = true;
-
+  const w=WORDS[trial], mask="#".repeat(w.length);
+  let showF=START_F, hideF=CYCLE_F-showF;
+  const t0=performance.now(); let active=true;
   function cycle(){
     if(!active) return;
-    scr.textContent = w;
-    waitFrames(showF, ()=>{ if(!active) return;
-      scr.textContent = mask;
-      waitFrames(hideF, ()=>{ if(!active) return;
-        showF += STEP_F;
-        hideF  = Math.max(0, CYCLE_F-showF);
-        cycle();
-      });
+    scr.textContent=w;
+    waitFrames(showF,()=>{ if(!active) return;
+      scr.textContent=mask;
+      waitFrames(hideF,()=>{ if(active){
+        showF+=STEP_F; hideF=Math.max(0,CYCLE_F-showF); cycle();
+      }});
     });
   }
   cycle();
-
   function onSpace(e){
-    if(e.code==="Space" && active){
+    if(e.code==="Space"&&active){
       active=false;
       const rt=Math.round(performance.now()-t0);
       window.removeEventListener("keydown",onSpace);
@@ -284,21 +270,20 @@ function present(){              // déroulement d’UN essai
   }
   window.addEventListener("keydown",onSpace);
 }
-
 function fin(){
-  scr.style.fontSize="40px";
-  scr.textContent=$END_MSG;
+  scr.style.fontSize="40px"; scr.textContent=$END_MSG;
   $DOWNLOAD
 }
-
 $STARTER
 </script>
 </body>
 </html>
 """)
 
-# -------------------------------------------------- Génération des deux HTML
-def calibration_html()->str:
+# ----------------------------------------------------------------------------
+# 4C.  FABRICATION DES PAGES HTML
+# ----------------------------------------------------------------------------
+def calibration_html():  # renvoie le code du test 60 Hz
     return TEST60_HTML
 
 def experiment_html(words, *, cycle_frames=21, start_frames=1, step_frames=1,
@@ -317,18 +302,14 @@ a.style.fontSize="32px";
 a.style.marginTop="30px";
 document.body.appendChild(a);"""
     download_js=download_js.replace("$","$$")
-
     # démarrage -------------------------------------------------------------
     if fullscreen:
         starter_js=r"""
 scr.textContent="Appuyez sur la barre ESPACE pour commencer";
-function first(e){
-  if(e.code==="Space"){
-    window.removeEventListener("keydown",first);
-    document.documentElement.requestFullscreen?.();
-    present();
-  }
-}
+function first(e){ if(e.code==="Space"){
+  window.removeEventListener("keydown",first);
+  document.documentElement.requestFullscreen?.(); present();
+}}
 window.addEventListener("keydown",first);"""
     else:
         starter_js="present();"
@@ -344,38 +325,23 @@ window.addEventListener("keydown",first);"""
     )
 
 # =============================================================================
-# 5. PAGES STREAMLIT
+# 5.  PAGES STREAMLIT
 # =============================================================================
-# ───────────────────────── PAGE 0 : TEST 60 Hz ─────────────────────────────
+# ─────────── PAGE 0 : TEST 60 Hz ────────────────────────────────────────────
 if st.session_state.page=="screen_test":
-    st.empty()  # supprimer marges
-    comp=components.v1.html(calibration_html(),height=600,scrolling=False)
+    st.write("### Vérification de l’écran (60 Hz requis)")
+    hz_value = components.html(calibration_html(), height=600, scrolling=False)
+    if hz_value == "ok":
+        st.session_state.hz_ok = True
+    # Bouton vers l’introduction : activé seulement si le test est réussi
+    if st.button("Passer à la présentation ➜", disabled=not st.session_state.hz_ok):
+        st.session_state.page="intro"; do_rerun()
 
-    # écoute du message JS « passed »
-    msg=st.components.v1.html("""
-    <script>
-    window.addEventListener("message",e=>{
-      if(e.data && e.data.passed){
-        window.parent.postMessage("go","*");
-      }
-    });
-    </script>""",height=0)
-    # petit contournement : un bouton invisible déclenché par JS
-    if st.button("-",key="hidden_go",help="",disabled=True):
-        pass
-    # Streamlit ne peut pas recevoir postMessage directement ; on invite
-    # volontairement la personne à cliquer sur « Continuer » (côté JS) puis
-    # sur le bouton Streamlit ci-dessous :
-    st.write("")
-    if st.button("Passer à la présentation ➜"):
-        st.session_state.page="intro"
-        do_rerun()
-
-# ───────────────────────── PAGE 1 : INTRO & TIRAGE ─────────────────────────
+# ─────────── PAGE 1 : INTRO + TIRAGE ───────────────────────────────────────-
 elif st.session_state.page=="intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown("""
-Des mots apparaîtront très brièvement puis seront masqués (suite de “#”).
+Des mots seront brièvement présentés puis masqués (suite de “#”).
 
 • Fixez le centre de l’écran.  
 • Dès que vous reconnaissez un mot, appuyez sur **ESPACE**.  
@@ -385,7 +351,6 @@ Des mots apparaîtront très brièvement puis seront masqués (suite de “#”)
 """)
     if not st.session_state.tirage_running and not st.session_state.tirage_ok:
         st.session_state.tirage_running=True; do_rerun()
-
     if st.session_state.tirage_running and not st.session_state.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
             df=build_sheet()
@@ -394,29 +359,24 @@ Des mots apparaîtront très brièvement puis seront masqués (suite de “#”)
             st.session_state.tirage_ok=True
             st.session_state.tirage_running=False
         st.success("Tirage terminé !")
-
     if st.session_state.tirage_ok:
         if st.button("Commencer la familiarisation"):
             st.session_state.page="fam"; do_rerun()
 
-# ───────────────────────── PAGE 2 : FAMILIARISATION ────────────────────────
+# ─────────── PAGE 2 : FAMILIARISATION ──────────────────────────────────────
 elif st.session_state.page=="fam":
     st.header("Familiarisation (2 mots)")
-    st.markdown("Appuyez sur **ESPACE** dès que le mot apparaît, tapez-le puis **Entrée**.")
-    components.v1.html(
-        experiment_html(PRACTICE_WORDS,with_download=False,
-                        cycle_frames=21,start_frames=1,step_frames=1),
-        height=650,scrolling=False
-    )
+    st.markdown("Appuyez sur **ESPACE** dès que le mot apparaît, saisissez-le puis **Entrée**.")
+    components.html(
+        experiment_html(PRACTICE_WORDS, with_download=False),
+        height=650, scrolling=False)
     st.divider()
     if st.button("Passer au test principal"):
         st.session_state.page="exp"; do_rerun()
 
-# ───────────────────────── PAGE 3 : TEST PRINCIPAL ─────────────────────────
+# ─────────── PAGE 3 : TEST PRINCIPAL ───────────────────────────────────────
 elif st.session_state.page=="exp":
-    components.v1.html(
+    components.html(
         experiment_html(st.session_state.stimuli,
-                        cycle_frames=21,start_frames=1,step_frames=1,
-                        with_download=True,fullscreen=True),
-        height=700,scrolling=False
-    )
+                        with_download=True, fullscreen=True),
+        height=700, scrolling=False)
