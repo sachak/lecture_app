@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Reconnaissance de mots masqués
-Plein-écran permanent – aucune barre de scroll
-streamlit run exp3.py
+EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
+(familiarisation + test 80 mots tirés aléatoirement)
+
+Exécution :  streamlit run exp3.py
+Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
+
 import json, random
 from pathlib import Path
 from string import Template
@@ -13,136 +16,376 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ─────────────────────── CONFIG GÉNÉRALE ───────────────────────────────
-st.set_page_config(page_title="Reconnaissance de mots", layout="wide")
-st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
-            unsafe_allow_html=True)
+# ────────────────────────── OUTIL RERUN COMPATIBLE ─────────────────────────
+def do_rerun():
+    """Force un rerun quel que soit le nom de la fonction dans la version."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:                              # anciennes versions
+        st.experimental_rerun()
 
-PAGES = ["intro", "instr", "fam", "pre", "test", "fin"]
-ss = st.session_state
-ss.setdefault("page", "intro")
-ss.setdefault("stimuli", [])
-ss.setdefault("tirage_ok", False)
+# ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
+st.set_page_config(page_title="Expérience 3",
+                   layout="wide",
+                   initial_sidebar_state="collapsed")
 
-def R(): st.rerun()            # raccourci rerun
+# habillage noir pour toute la page Streamlit
+st.markdown(
+    """
+    <style>
+        body, .stApp {background:#000 !important; color:#fff !important;}
+        #MainMenu, header, footer {visibility: hidden;}   /* pas de chrome */
+        .css-1d391kg {display:none;}                      /* ancien spinner */
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# ────────────────────────── OUTILS ──────────────────────────────────────
-def tirer_80() -> list[str]:
-    mots = (pd.read_excel(Path(__file__).with_name("Lexique.xlsx"))
-              .ortho.astype(str).str.upper().unique().tolist())
-    random.shuffle(mots)
-    return mots[:80]
+# =============================================================================
+# 1. PARAMÈTRES DU TIRAGE
+# =============================================================================
+MEAN_FACTOR_OLDPLD = 0.45
+MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
+SD_MULT            = {"letters": 2.0, "phons": 2.0,
+                      "old20": 0.28, "pld20": 0.28, "freq": 1.9}
+XLSX            = Path(__file__).with_name("Lexique.xlsx")
+N_PER_FEUIL_TAG = 5
+TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
+MAX_TRY_TAG     = 1_000
+MAX_TRY_FULL    = 1_000
+rng             = random.Random()
 
-# plein-écran + blocage scroll : injecté une fois et pour toujours
-FULLSCREEN_JS = """
-<script>
-(async ()=>{
-  try{await document.documentElement.requestFullscreen();}catch(e){}
-  /* désactive la molette */
-  addEventListener('wheel',e=>e.preventDefault(),{passive:false});
-  /* cache scrollbars résiduelles */
-  const css=document.createElement('style');
-  css.textContent='html,body,.block-container{height:100%;overflow:hidden;padding:0;margin:0}';
-  document.head.appendChild(css);
-  /* signale au parent que le FS est lancé */
-  parent.postMessage('fs_ok','*');
-})();
-</script>"""
+NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS  = ["PAIN", "EAU"]
 
-# HTML (fam + test) ------------------------------------------------------
-PHASE_TPL = Template(r"""
-<!DOCTYPE html><html><head><meta charset="utf-8"/>
+# =============================================================================
+# 2. OUTILS DIVERS
+# =============================================================================
+def to_float(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(
+        s.astype(str)
+         .str.replace(" ",  "", regex=False)
+         .str.replace("\xa0","", regex=False)
+         .str.replace(",", ".", regex=False),
+        errors="coerce"
+    )
+
+def shuffled(df: pd.DataFrame) -> pd.DataFrame:
+    return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
+
+def cat_code(tag: str) -> int:
+    return -1 if "LOW" in tag else 1
+
+# =============================================================================
+# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
+# =============================================================================
+@st.cache_data(show_spinner=False)   # on gère le spinner manuellement
+def load_sheets() -> dict[str, dict]:
+    if not XLSX.exists():
+        st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
+
+    xls          = pd.ExcelFile(XLSX)
+    sheet_names  = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
+    if len(sheet_names) != 4:
+        st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
+
+    feuilles, all_freq_cols = {}, set()
+    for sh in sheet_names:
+        df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
+        freq_cols = [c for c in df.columns if c.startswith("freq")]
+        all_freq_cols.update(freq_cols)
+
+        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
+        if any(c not in df.columns for c in need):
+            st.error(f"Colonnes manquantes dans {sh}"); st.stop()
+
+        for col in NUM_BASE + freq_cols:
+            df[col] = to_float(df[col])
+        df["ortho"] = df["ortho"].astype(str).str.upper()
+        df          = df.dropna(subset=need).reset_index(drop=True)
+
+        stats = {f"m_{c}": df[c].mean() for c in ("old20", "pld20", "nblettres", "nbphons")}
+        stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
+                  ("old20", "pld20", "nblettres", "nbphons") + tuple(freq_cols)}
+        feuilles[sh] = {"df": df, "stats": stats, "freq_cols": freq_cols}
+
+    feuilles["all_freq_cols"] = sorted(all_freq_cols)
+    return feuilles
+
+def masks(df, st_):
+    return {"LOW_OLD":  df.old20 < st_["m_old20"] - st_["sd_old20"],
+            "HIGH_OLD": df.old20 > st_["m_old20"] + st_["sd_old20"],
+            "LOW_PLD":  df.pld20 < st_["m_pld20"] - st_["sd_pld20"],
+            "HIGH_PLD": df.pld20 > st_["m_pld20"] + st_["sd_pld20"]}
+
+def sd_ok(sub, st_, fq_cols):
+    return (sub.nblettres.std(ddof=0) <= st_["sd_nblettres"] * SD_MULT["letters"] and
+            sub.nbphons.std(ddof=0)   <= st_["sd_nbphons"]   * SD_MULT["phons"]   and
+            sub.old20.std(ddof=0)     <= st_["sd_old20"]     * SD_MULT["old20"]   and
+            sub.pld20.std(ddof=0)     <= st_["sd_pld20"]     * SD_MULT["pld20"]   and
+            all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq_cols))
+
+def mean_lp_ok(sub, st_):
+    return (abs(sub.nblettres.mean() - st_["m_nblettres"]) <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
+            abs(sub.nbphons.mean()   - st_["m_nbphons"])   <= MEAN_DELTA["phons"]   * st_["sd_nbphons"])
+
+def pick_five(tag, feuille, used, F):
+    df, st_  = F[feuille]["df"], F[feuille]["stats"]
+    fqs      = F[feuille]["freq_cols"]
+    pool     = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
+    if len(pool) < N_PER_FEUIL_TAG: return None
+
+    for _ in range(MAX_TRY_TAG):
+        samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0, 1_000_000)).copy()
+        if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
+        if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
+        if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
+        if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
+        if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fqs): continue
+        samp["source"], samp["group"] = feuille, tag
+        samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
+        samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
+        return samp
+    return None
+
+def build_sheet() -> pd.DataFrame:
+    F = load_sheets(); all_freq_cols = F["all_freq_cols"]
+    for _ in range(MAX_TRY_FULL):
+        taken = {sh: set() for sh in F if sh != "all_freq_cols"}
+        groups, ok = [], True
+        for tag in TAGS:
+            parts = []
+            for sh in taken:
+                sub = pick_five(tag, sh, taken[sh], F)
+                if sub is None: ok = False; break
+                parts.append(sub); taken[sh].update(sub.ortho)
+            if not ok: break
+            groups.append(shuffled(pd.concat(parts, ignore_index=True)))
+        if ok:
+            df = pd.concat(groups, ignore_index=True)
+            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group",
+                                                            "old_cat", "pld_cat"]
+            return df[order]
+    st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
+
+# =============================================================================
+# 4. PAGE HTML / JS (string.Template pour éviter les problèmes d’accolades)
+# =============================================================================
+HTML_TPL = Template(r"""
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"/>
 <style>
-html,body{margin:0;height:100%;overflow:hidden;
-display:flex;align-items:center;justify-content:center;
-background:#000;color:#fff;font-family:'Courier New',monospace;font-size:60px}
-#ans{display:none;font-size:48px;width:60%;text-align:center;color:#000}
-</style></head><body tabindex="0">
-<div id="scr">+</div><input id="ans"/>
-<script>
-const WORDS=$WORDS, FLAG="$FLAG",
-      CYCLE=350, STEP=14, START=14;
-let i=0, scr=document.getElementById('scr'),
-    ans=document.getElementById('ans');
-
-function next(){
- if(i>=WORDS.length){ parent.postMessage(FLAG,'*'); return; }
- scr.textContent='+'; setTimeout(()=>stim(WORDS[i++]),500);
+/* ——— plein écran noir, texte blanc ——— */
+html,body{
+  height:100%;width:100%;
+  margin:0;padding:0;overflow:hidden;
+  background:#000;color:#fff;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  font-family:'Courier New',monospace;
 }
-function stim(w){
- const mask='#'.repeat(w.length);
- let sh=START, hd=CYCLE-sh, act=true, t0=performance.now();
- (function loop(){
-  if(!act)return; scr.textContent=w;
-  setTimeout(()=>{ if(!act)return; scr.textContent=mask;
-      setTimeout(()=>{ if(act){sh+=STEP;hd=Math.max(0,CYCLE-sh);loop();}},hd);
-  }, sh);})();
- function onSp(e){
-  if(e.code!=='Space'||!act) return;
-  act=false; removeEventListener('keydown',onSp);
-  const rt=Math.round(performance.now()-t0);
-  scr.textContent=''; ans.style.display='block'; ans.value=''; ans.focus();
-  ans.addEventListener('keydown',function onEnt(ev){
-     if(ev.key==='Enter'){
-        ev.preventDefault();
-        ans.removeEventListener('keydown',onEnt);
-        ans.style.display='none';
-        parent.postMessage({w,rt,r:ans.value.trim()},'*');
-        next();
-  }});}
- addEventListener('keydown',onSp);
+/* mot / masque */
+#scr{
+  font-size:7vw;     /* s’adapte à la taille de la fenêtre */
+  user-select:none;
+  color:#fff;
 }
-next();
-</script></body></html>""")
+/* zone de réponse */
+#ans{
+  display:none;
+  font-size:5vw;
+  width:60%;
+  text-align:center;
+  background:#000;
+  color:#fff;
+  border:none;
+  border-bottom:3px solid #fff;
+  outline:none;
+  caret-color:#fff;
+}
+::selection{background:#444;color:#fff}
+</style>
+</head>
 
-def phase_html(words:list[str], flag:str)->str:
-    return PHASE_TPL.substitute(WORDS=json.dumps(words), FLAG=flag)
+<body tabindex="0">
+<div id="scr"></div>
+<input id="ans" autocomplete="off"/>
 
-# ──────────────────────── ROUTAGE  ──────────────────────────────────────
-flag = st.query_params.get("flag", "")
-if flag and flag in PAGES and flag != ss.page:
-    ss.page = flag
-    st.query_params.clear()
-
-# ─────────────────────── PAGE intro ─────────────────────────────────────
-if ss.page == "intro":
-    st.title("Test de reconnaissance de mots (60 Hz)")
-    st.write("Cliquez pour passer en plein-écran, puis lisez les instructions.")
-    if st.button("▶  Activer le plein-écran"):
-        # injecte JS plein-écran et attend le message 'fs_ok'
-        components.v1.html(FULLSCREEN_JS, height=0, width=0)
-        components.v1.html("""
 <script>
-addEventListener('message',e=>{
-  if(e.data==='fs_ok'){ parent.location.search='flag=instr'; }});
-</script>""", height=0, width=0)
+/* ————————————————— paramètres transmis par Streamlit ————————————————— */
+const WORDS = $WORDS;
+const CYCLE = $CYCLE;
+const START = $START;
+const STEP  = $STEP;
 
-# ─────────────────────── PAGE instructions ──────────────────────────────
-elif ss.page == "instr":
-    st.header("Instructions")
-    st.write("Fixez la croix, appuyez sur Space dès que le mot apparaît, "
-             "tapez-le, puis Entrée.")
-    if st.button("▶  Démarrer la familiarisation (2 mots)"):
-        ss.page = "fam"; R()
+/* ————————————————— logique expérimentale ————————————————— */
+let trial = 0;
+const results = [];
+const scr = document.getElementById("scr");
+const ans = document.getElementById("ans");
 
-# ─────────────────────── PAGE familiarisation ───────────────────────────
-elif ss.page == "fam":
-    components.v1.html(phase_html(["PAIN","EAU"], "pre"),
-                       height=9999, scrolling=False)
+function nextTrial(){
+  if(trial >= WORDS.length){ endExperiment(); return; }
 
-# ─────────────────────── PAGE transition ───────────────────────────────
-elif ss.page == "pre":
-    st.header("Familiarisation terminée")
-    if st.button("▶  Commencer le test principal (80 mots)"):
-        if not ss.tirage_ok:
-            ss.stimuli = tirer_80(); ss.tirage_ok = True
-        ss.page = "test"; R()
+  const w    = WORDS[trial];
+  const mask = "#".repeat(w.length);
+  let showDur = START, hideDur = CYCLE - showDur;
+  let tShow, tHide, active = true, t0 = performance.now();
 
-# ─────────────────────── PAGE test principal ────────────────────────────
-elif ss.page == "test":
-    components.v1.html(phase_html(ss.stimuli, "fin"),
-                       height=9999, scrolling=False)
+  (function loop(){
+    if(!active) return;
+    scr.textContent = w;
+    tShow = setTimeout(()=>{
+      if(!active) return;
+      scr.textContent = mask;
+      tHide = setTimeout(()=>{
+        if(active){
+          showDur += STEP;
+          hideDur  = Math.max(0, CYCLE - showDur);
+          loop();
+        }
+      }, hideDur);
+    }, showDur);
+  })();
 
-# ─────────────────────── PAGE fin ───────────────────────────────────────
-elif ss.page == "fin":
-    st.header("Merci ! Le test est terminé.")
+  function onSpace(e){
+    if(e.code === "Space" && active){
+      active = false;
+      clearTimeout(tShow); clearTimeout(tHide);
+      const rt = Math.round(performance.now() - t0);
+      window.removeEventListener("keydown", onSpace);
+
+      scr.textContent = "";
+      ans.style.display = "block"; ans.value = ""; ans.focus();
+
+      ans.addEventListener("keydown", function onEnter(ev){
+        if(ev.key === "Enter"){
+          ev.preventDefault();
+          results.push({word:w, rt_ms:rt, response:ans.value.trim()});
+          ans.removeEventListener("keydown", onEnter);
+          ans.style.display = "none";
+          trial += 1; nextTrial();
+        }
+      });
+    }
+  }
+  window.addEventListener("keydown", onSpace);
+}
+
+function endExperiment(){
+  scr.style.fontSize = "5vw";
+  scr.textContent = $END_MSG;
+  $DOWNLOAD
+}
+
+/* première trial et focus clavier */
+window.addEventListener("load", ()=>{
+  document.body.focus();
+  nextTrial();
+});
+</script>
+</body>
+</html>
+""")
+
+def experiment_html(words, with_download=True,
+                    cycle_ms=350, start_ms=14, step_ms=14):
+    """Construit la page HTML/JS pour la phase demandée."""
+    download_js = ""
+    if with_download:
+        download_js = r"""
+const csv = ["word;rt_ms;response",
+             ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)].join("\n");
+const a = document.createElement("a");
+a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+a.download = "results.csv";
+a.textContent = "Télécharger les résultats";
+a.style.fontSize = "32px";
+a.style.marginTop = "30px";
+document.body.appendChild(a);"""
+    # doubler les $ éventuels dans download_js pour la substitution Template
+    download_js = download_js.replace("$", "$$")
+
+    html = HTML_TPL.substitute(
+        WORDS=json.dumps(words),
+        CYCLE=cycle_ms,
+        START=start_ms,
+        STEP=step_ms,
+        END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
+        DOWNLOAD=download_js
+    )
+    return html
+
+# =============================================================================
+# 5. GESTION DE LA NAVIGATION
+# =============================================================================
+if "page" not in st.session_state:             st.session_state.page = "intro"
+if "tirage_en_cours" not in st.session_state:  st.session_state.tirage_en_cours = False
+if "tirage_ok"      not in st.session_state:   st.session_state.tirage_ok      = False
+
+# ─────────────────────────── PAGE INTRO ─────────────────────────────────────
+if st.session_state.page == "intro":
+    st.title("Tâche de reconnaissance de mots")
+
+    st.markdown(
+        """
+**Principe**  
+Des mots seront présentés très brièvement à l’écran, immédiatement
+suivis d’un masque (suite de dièses).
+
+**Votre tâche**  
+• Fixez votre regard au centre de l’écran.  
+• Dès que vous reconnaissez un mot, appuyez sur la barre **Espace**.  
+• Tapez ensuite le mot (accents / pluriels) et validez avec **Entrée**.
+
+**Déroulement**  
+1. Une courte phase d’entraînement (2 mots).  
+2. Le test principal (80 mots tirés au sort).
+        """
+    )
+
+    # --------   déclenche AUTOMATIQUEMENT le tirage la première fois   -------
+    if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
+        st.session_state.tirage_en_cours = True
+        do_rerun()
+
+    # --------------------- TIRAGE EN COURS (spinner) -------------------------
+    if st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
+        with st.spinner("Tirage aléatoire des 80 mots…"):
+            tirage_df = build_sheet()
+            mots = tirage_df["ortho"].tolist(); random.shuffle(mots)
+            st.session_state.tirage_df  = tirage_df
+            st.session_state.stimuli    = mots
+            st.session_state.tirage_en_cours = False
+            st.session_state.tirage_ok  = True
+        st.success("Tirage terminé !")
+
+    # --------------------- BOUTON ACTIF QUAND TIRAGE OK ----------------------
+    if st.session_state.tirage_ok:
+        if st.button("Commencer la familiarisation"):
+            st.session_state.page = "fam"
+            do_rerun()
+
+# ───────────────────────── PAGE FAMILIARISATION ────────────────────────────
+elif st.session_state.page == "fam":
+    st.header("Familiarisation (2 mots)")
+    st.markdown("Appuyez sur **Espace** dès que le mot apparaît, "
+                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
+    components.v1.html(
+        experiment_html(PRACTICE_WORDS, with_download=False),
+        height=650, scrolling=False
+    )
+    st.divider()
+    if st.button("Passer au test principal"):
+        st.session_state.page = "exp"; do_rerun()
+
+# ────────────────────────── PAGE TEST PRINCIPAL ────────────────────────────
+elif st.session_state.page == "exp":
+    st.header("Test principal (80 mots)")
+    with st.expander("Aperçu des statistiques du tirage"):
+        st.dataframe(st.session_state.tirage_df.head())
+    components.v1.html(
+        experiment_html(st.session_state.stimuli, with_download=True),
+        height=650, scrolling=False
+    )
