@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
-(familiarisation + test 80 mots tirés aléatoirement)
+(familiarisation + test 80 mots)
 
-Exécution :  streamlit run exp3.py
-Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
+Exécution :   streamlit run exp3.py
+Dépendance :  Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
 import json, random
@@ -17,11 +17,8 @@ from streamlit import components
 
 # ────────────────────────── OUTIL RERUN COMPATIBLE ─────────────────────────
 def do_rerun():
-    """Force un rerun quel que soit le nom de la fonction dans la version."""
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:                              # anciennes versions
-        st.experimental_rerun()
+    if hasattr(st, "rerun"): st.rerun()
+    else:                    st.experimental_rerun()
 
 # ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -29,19 +26,19 @@ st.markdown(
     """
     <style>
         #MainMenu, header, footer {visibility: hidden;}
-        .css-1d391kg {display: none;}   /* ancien spinner Streamlit */
+        .css-1d391kg {display: none;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # =============================================================================
-# 1. PARAMÈTRES DU TIRAGE
+# PARAMÈTRES DU TIRAGE (inchangés)
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
-SD_MULT             = {"letters": 2.0, "phons": 2.0,
-                       "old20": 0.28, "pld20": 0.28, "freq": 1.9}
+SD_MULT            = {"letters": 2.0, "phons": 2.0,
+                      "old20": 0.28, "pld20": 0.28, "freq": 1.9}
 XLSX            = Path(__file__).with_name("Lexique.xlsx")
 N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
@@ -53,7 +50,7 @@ NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 # =============================================================================
-# 2. OUTILS DIVERS
+# 1. OUTILS DE TIRAGE (identiques aux versions précédentes)
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -70,14 +67,10 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
 
-# =============================================================================
-# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
-# =============================================================================
-@st.cache_data(show_spinner=False)   # on gère le spinner manuellement
+@st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
-
     xls          = pd.ExcelFile(XLSX)
     sheet_names  = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheet_names) != 4:
@@ -157,13 +150,20 @@ def build_sheet() -> pd.DataFrame:
             groups.append(shuffled(pd.concat(parts, ignore_index=True)))
         if ok:
             df = pd.concat(groups, ignore_index=True)
-            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group", "old_cat", "pld_cat"]
+            order = ["ortho"] + NUM_BASE + all_freq_cols + ["source", "group",
+                     "old_cat", "pld_cat"]
             return df[order]
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
 # =============================================================================
-# 4. PAGE HTML / JS (string.Template pour éviter les problèmes d’accolades)
+# 2. TEMPLATE HTML / JS – CALIBRAGE 60 Hz
 # =============================================================================
+# Paramètres FIXES (en FRAMES 60 Hz)
+CROSS_FR   = 30   # 500 ms
+SHOW_START = 1    # 1 frame  ≃ 16,67 ms
+STEP_FR    = 1    # +1 frame chaque cycle
+CYCLE_FR   = 20   # mot + masque = 20 frames ≃ 333 ms
+
 HTML_TPL = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -179,184 +179,211 @@ align-items:center;justify-content:center;font-family:'Courier New',monospace}
 <div id="scr"></div>
 <input id="ans" autocomplete="off"/>
 <script>
-window.addEventListener("load",()=>document.body.focus());
 const WORDS = $WORDS;
-const CYCLE = $CYCLE;
-const START = $START;
-const STEP  = $STEP;
-const CROSS = $CROSS;   // durée d’affichage de la croix (ms)
 
-let trial = 0;
-let results = [];
-const scr = document.getElementById("scr");
-const ans = document.getElementById("ans");
-
-function nextTrial(){
-  if(trial >= WORDS.length){ endExperiment(); return; }
-
-  /* ─────────── Affichage de la croix de fixation ─────────── */
-  scr.textContent = "+";
-  setTimeout(()=>runWordTrial(WORDS[trial]), CROSS);
-}
-
-/* Fonction principale correspondant à la présentation d’un mot */
-function runWordTrial(w){
-  const mask = "#".repeat(w.length);
-
-  let showDur = START;
-  let hideDur = CYCLE - showDur;
-  let tShow, tHide;
-  const t0 = performance.now();
-  let active = true;
-
-  (function loop(){
-    if(!active) return;
-    scr.textContent = w;
-    tShow = setTimeout(()=>{
-      if(!active) return;
-      scr.textContent = mask;
-      tHide = setTimeout(()=>{
-        if(active){
-          showDur += STEP;
-          hideDur = Math.max(0, CYCLE - showDur);
-          loop();
-        }
-      }, hideDur);
-    }, showDur);
-  })();
-
-  /* Appui barre espace */
-  function onSpace(e){
-    if(e.code === "Space" && active){
-      active = false;
-      clearTimeout(tShow); clearTimeout(tHide);
-      const rt = Math.round(performance.now() - t0);
-      window.removeEventListener("keydown", onSpace);
-      scr.textContent = "";
-      ans.style.display = "block"; ans.value = ""; ans.focus();
-      ans.addEventListener("keydown", function onEnter(ev){
-        if(ev.key === "Enter"){
-          ev.preventDefault();
-          results.push({word:w, rt_ms:rt, response:ans.value.trim()});
-          ans.removeEventListener("keydown", onEnter);
-          ans.style.display = "none";
-          trial += 1;
-          nextTrial();
-        }
-      });
+/* ------------------- 1. Mesure de la fréquence écran ------------------- */
+function estimateFPS(samples=120){
+  return new Promise(ok=>{
+    let t=[];
+    function step(ts){
+      t.push(ts);
+      if(t.length<samples) requestAnimationFrame(step);
+      else{
+        const d=t.slice(1).map((v,i)=>v-t[i]);
+        const avg=d.reduce((a,b)=>a+b,0)/d.length;
+        ok(1000/avg);  // Hz
+      }
     }
-  }
-  window.addEventListener("keydown", onSpace);
+    requestAnimationFrame(step);
+  });
 }
 
-function endExperiment(){
-  scr.style.fontSize = "40px";
-  scr.textContent = $END_MSG;
-  $DOWNLOAD
+/* ------------------- 2. Lancer ou bloquer l’expérience ----------------- */
+function init(){
+  estimateFPS().then(fps=>{
+    if(fps>55 && fps<65){          // plage acceptée ≈ 60 Hz
+      document.body.focus();
+      startExperiment();
+    }else{
+      document.body.innerHTML =
+      `<div style="text-align:center;font-size:32px;max-width:80%">
+         <p><strong>Fréquence détectée&nbsp;: ${fps.toFixed(1)} Hz</strong></p>
+         <p>Cette expérience est standardisée pour un écran 60 Hz.</p>
+         <p>Merci d’utiliser un moniteur réglé sur 60 Hz
+            (ou de modifier les paramètres d’affichage) puis de relancer.</p>
+       </div>`;
+    }
+  });
 }
-nextTrial();
+
+/* ----------------------- 3. Expérience (frames) ------------------------ */
+function startExperiment(){
+  let trial=0;
+  let results=[];
+  const scr=document.getElementById("scr");
+  const ans=document.getElementById("ans");
+
+  function nextTrial(){
+    if(trial>=WORDS.length){ endExperiment(); return; }
+
+    /* CROIX de fixation */
+    let f=0;
+    scr.textContent="+";
+    function crossLoop(){
+      if(++f < $CROSS_FR) requestAnimationFrame(crossLoop);
+      else                runWord(WORDS[trial]);
+    }
+    requestAnimationFrame(crossLoop);
+  }
+
+  /* ---------- MOT + MASQUE ---------- */
+  function runWord(word){
+    const mask="#".repeat(word.length);
+    let showFrames=$SHOW_START;
+    let frameInCycle=0;
+    let active=true;
+    const t0=performance.now();
+
+    function stimLoop(){
+      if(!active) return;
+      if(frameInCycle < showFrames)       scr.textContent=word;
+      else if(frameInCycle < $CYCLE_FR)   scr.textContent=mask;
+      else{
+        showFrames += $STEP_FR;
+        frameInCycle=-1;                  // deviendra 0 après ++
+      }
+      frameInCycle++;
+      requestAnimationFrame(stimLoop);
+    }
+    requestAnimationFrame(stimLoop);
+
+    function onSpace(e){
+      if(e.code==="Space" && active){
+        active=false;
+        window.removeEventListener("keydown",onSpace);
+        const rt=Math.round(performance.now()-t0);
+        scr.textContent="";
+        ans.style.display="block"; ans.value=""; ans.focus();
+
+        ans.addEventListener("keydown", function onEnter(ev){
+          if(ev.key==="Enter"){
+            ev.preventDefault();
+            results.push({word,rt_ms:rt,response:ans.value.trim()});
+            ans.removeEventListener("keydown",onEnter);
+            ans.style.display="none";
+            trial++; nextTrial();
+          }
+        });
+      }
+    }
+    window.addEventListener("keydown",onSpace);
+  }
+
+  function endExperiment(){
+    scr.style.fontSize="40px";
+    scr.textContent=$END_MSG;
+    $DOWNLOAD
+  }
+  nextTrial();
+}
+init();       /* ← démarrage global */
 </script>
 </body>
 </html>
 """)
 
-def experiment_html(words, *, with_download=True,
-                    cross_ms=500, cycle_ms=350, start_ms=14, step_ms=14):
-    """Fabrique la page HTML/JS de l’expérience."""
-    download_js = ""
+def experiment_html(words, *, with_download=True):
+    download_js=""
     if with_download:
-        download_js = r"""
-const csv = ["word;rt_ms;response",
-             ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)].join("\n");
-const a = document.createElement("a");
-a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-a.download = "results.csv";
-a.textContent = "Télécharger les résultats";
-a.style.fontSize = "32px";
-a.style.marginTop = "30px";
+        download_js=r"""
+const csv=["word;rt_ms;response",
+           ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
+const a=document.createElement("a");
+a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+a.download="results.csv";
+a.textContent="Télécharger les résultats";
+a.style.fontSize="32px";a.style.marginTop="30px";
 document.body.appendChild(a);"""
-    # doubler les $ éventuels dans download_js pour la substitution Template
-    download_js = download_js.replace("$", "$$")
+    download_js=download_js.replace("$","$$")  # échapper $
 
-    html = HTML_TPL.substitute(
+    return HTML_TPL.substitute(
         WORDS=json.dumps(words),
-        CYCLE=cycle_ms,
-        START=start_ms,
-        STEP=step_ms,
-        CROSS=cross_ms,
+        CROSS_FR=CROSS_FR,
+        CYCLE_FR=CYCLE_FR,
+        STEP_FR=STEP_FR,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
         DOWNLOAD=download_js
     )
-    return html
 
 # =============================================================================
-# 5. GESTION DE LA NAVIGATION
+# 3. NAVIGATION STREAMLIT
 # =============================================================================
-if "page" not in st.session_state:        st.session_state.page = "intro"
-if "tirage_en_cours" not in st.session_state: st.session_state.tirage_en_cours = False
-if "tirage_ok"      not in st.session_state: st.session_state.tirage_ok      = False
+if "page" not in st.session_state:        st.session_state.page="intro"
+if "tirage_en_cours" not in st.session_state: st.session_state.tirage_en_cours=False
+if "tirage_ok"      not in st.session_state: st.session_state.tirage_ok=False
 
-# ─────────────────────────── PAGE INTRO ─────────────────────────────────────
-if st.session_state.page == "intro":
+# ───────────────────────── PAGE INTRO ─────────────────────────────────────
+if st.session_state.page=="intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
 
     st.markdown(
         """
+**Important**  
+Cette expérience est **strictement calibrée pour un moniteur 60 Hz**.  
+Un test automatique vérifiera la fréquence de votre écran avant de commencer.
+
 **Principe**  
-Des mots seront présentés très brièvement à l’écran, immédiatement suivis d’un masque (suite de dièses).
+Des mots apparaîtront très brièvement (≈ 17 ms, soit 1 trame) suivis d’un masque.
 
 **Votre tâche**  
-• Fixez votre regard sur la croix **+** affichée au centre de l’écran.  
-• Dès que vous reconnaissez un mot, appuyez sur la barre **Espace**.  
-• Tapez ensuite le mot (accents / pluriels) et validez avec **Entrée**.
+• Fixez la croix **+** au centre.  
+• Dès que vous reconnaissez le mot, appuyez sur **Espace**.  
+• Tapez ensuite le mot et validez avec **Entrée**.
 
 **Déroulement**  
-1. Une courte phase d’entraînement (2 mots).  
-2. Le test principal (80 mots tirés au sort).
+1. Familiarisation (2 mots)  
+2. Test principal (80 mots)
         """
     )
 
-    # --------   déclenche AUTOMATIQUEMENT le tirage la première fois   -------
+    # tirage automatique au premier chargement
     if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
-        st.session_state.tirage_en_cours = True
-        do_rerun()
+        st.session_state.tirage_en_cours=True; do_rerun()
 
-    # --------------------- TIRAGE EN COURS (spinner) -------------------------
+    # spinner de tirage
     if st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
-            tirage_df = build_sheet()
-            mots = tirage_df["ortho"].tolist(); random.shuffle(mots)
-            st.session_state.tirage_df  = tirage_df
-            st.session_state.stimuli    = mots
-            st.session_state.tirage_en_cours = False
-            st.session_state.tirage_ok  = True
+            tirage_df=build_sheet()
+            mots=tirage_df["ortho"].tolist(); random.shuffle(mots)
+            st.session_state.tirage_df=tirage_df
+            st.session_state.stimuli=mots
+            st.session_state.tirage_en_cours=False
+            st.session_state.tirage_ok=True
         st.success("Tirage terminé !")
 
-    # --------------------- BOUTON ACTIF QUAND TIRAGE OK ----------------------
     if st.session_state.tirage_ok:
         if st.button("Commencer la familiarisation"):
-            st.session_state.page = "fam"
-            do_rerun()
+            st.session_state.page="fam"; do_rerun()
 
-# ───────────────────────── PAGE FAMILIARISATION ────────────────────────────
-elif st.session_state.page == "fam":
+# ───────────────────────── PAGE FAMILIARISATION ───────────────────────────
+elif st.session_state.page=="fam":
     st.header("Familiarisation (2 mots)")
-    st.markdown("Fixez la croix **+**, appuyez sur **Espace** dès que le mot apparaît, "
-                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
+    st.markdown("Fixez la croix, appuyez sur **Espace** quand le mot apparaît, "
+                "puis tapez le mot lu et validez avec **Entrée**.")
     components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False, cross_ms=500),
+        experiment_html(PRACTICE_WORDS, with_download=False),
         height=650, scrolling=False
     )
     st.divider()
     if st.button("Passer au test principal"):
-        st.session_state.page = "exp"; do_rerun()
+        st.session_state.page="exp"; do_rerun()
 
-# ────────────────────────── PAGE TEST PRINCIPAL ────────────────────────────
-elif st.session_state.page == "exp":
+# ────────────────────────── PAGE TEST PRINCIPAL ───────────────────────────
+elif st.session_state.page=="exp":
     st.header("Test principal (80 mots)")
     with st.expander("Aperçu des statistiques du tirage"):
         st.dataframe(st.session_state.tirage_df.head())
     components.v1.html(
-        experiment_html(st.session_state.stimuli, with_download=True, cross_ms=500),
+        experiment_html(st.session_state.stimuli, with_download=True),
         height=650, scrolling=False
     )
