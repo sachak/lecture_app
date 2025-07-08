@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
-(familiarisation + test 80 mots)
+(familiarisation + test 80 mots) – calibrée 60 Hz
 
-Exécution : streamlit run exp3.py
+Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
@@ -15,24 +15,18 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ────────────────────── OUTIL RERUN ────────────────────────────────────────
-def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
+# ────────────────────── RERUN ──────────────────────────────────────────────
+do_rerun = (lambda: (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)())
 
 # ────────────────────── CONFIG STREAMLIT ───────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown(
-    """
-    <style>
-      #MainMenu, header, footer{visibility:hidden;}
-      .css-1d391kg{display:none;}                 /* ancien spinner */
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+  #MainMenu, header, footer{visibility:hidden;}
+  .css-1d391kg{display:none;}   /* ancien spinner */
+</style>""", unsafe_allow_html=True)
 
-# =============================================================================
-# PARAMÈTRES DU TIRAGE (identiques)
-# =============================================================================
+# ────────────────────── PARAMÈTRES TIRAGE ──────────────────────────────────
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
 SD_MULT            = {"letters": 2.0, "phons": 2.0,
@@ -42,18 +36,16 @@ N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 rng             = random.Random()
 
-NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS = ["PAIN", "EAU"]
+NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS  = ["PAIN", "EAU"]
 
 # =============================================================================
 # 1. OUTILS TIRAGE  (inchangés)
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
-        s.astype(str)
-         .str.replace(" ", "", regex=False)
-         .str.replace("\xa0", "", regex=False)
-         .str.replace(",", ".", regex=False),
+        s.astype(str).str.replace("[  ,]", "", regex=True)
+                      .str.replace(",", ".", regex=False),
         errors="coerce"
     )
 
@@ -67,30 +59,29 @@ def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
     xls = pd.ExcelFile(XLSX)
-    sh  = [n for n in xls.sheet_names if n.lower().startswith("feuil")]
-    if len(sh) != 4:
+    sheets = [n for n in xls.sheet_names if n.lower().startswith("feuil")]
+    if len(sheets) != 4:
         st.error("Il faut exactement 4 feuilles Feuil1 … Feuil4."); st.stop()
 
-    feuilles, freq_cols_all = {}, set()
-    for name in sh:
-        df = xls.parse(name); df.columns = df.columns.str.strip().str.lower()
-        freq_cols = [c for c in df.columns if c.startswith("freq")]
-        freq_cols_all.update(freq_cols)
-
-        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
+    feuilles, all_freq = {}, set()
+    for sh in sheets:
+        df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
+        freq = [c for c in df.columns if c.startswith("freq")]
+        all_freq.update(freq)
+        need = ["ortho","old20","pld20","nblettres","nbphons"] + freq
         if any(c not in df.columns for c in need):
-            st.error(f"Colonnes manquantes dans {name}"); st.stop()
+            st.error(f"Colonnes manquantes dans {sh}"); st.stop()
 
-        for c in NUM_BASE + freq_cols: df[c] = to_float(df[c])
+        for c in NUM_BASE + freq: df[c] = to_float(df[c])
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean() for c in ("old20","pld20","nblettres","nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
-                  ("old20","pld20","nblettres","nbphons")+tuple(freq_cols)}
-        feuilles[name] = {"df":df, "stats":stats, "freq_cols":freq_cols}
+                  ("old20","pld20","nblettres","nbphons") + tuple(freq)}
+        feuilles[sh] = {"df":df, "stats":stats, "freq_cols":freq}
 
-    feuilles["all_freq_cols"] = sorted(freq_cols_all)
+    feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
 
 def masks(df, st_):
@@ -115,7 +106,6 @@ def pick_five(tag, feuille, used, F):
     fqs     = F[feuille]["freq_cols"]
     pool    = df.loc[masks(df,st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG: return None
-
     for _ in range(1000):
         samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0,1_000_000)).copy()
         if tag=="LOW_OLD"  and samp.old20.mean()>=st_["m_old20"]-MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
@@ -149,7 +139,7 @@ def build_sheet()->pd.DataFrame:
     st.error("Impossible de générer la liste."); st.stop()
 
 # =============================================================================
-# 2. TEMPLATE HTML / JS (60 Hz + plein-écran auto)
+# 2. TEMPLATE HTML / JS (60 Hz) – fond noir + plein-écran / sortie FS à la fin
 # =============================================================================
 CROSS_FR, SHOW_START, STEP_FR, CYCLE_FR = 30, 1, 1, 20   # frames 60 Hz
 
@@ -157,16 +147,16 @@ HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
 html,body{height:100%;margin:0;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-family:'Courier New',monospace;background:#000;color:#fff}
+align-items:center;justify-content:center;font-family:'Courier New',monospace;
+background:#000;color:#fff}
 #scr{font-size:60px;user-select:none}
 #ans{display:none;font-size:48px;width:60%;text-align:center;color:#000}
 </style></head>
-<body tabindex="0">
-<div id="scr"></div><input id="ans" autocomplete="off"/>
+<body tabindex="0"><div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 const WORDS = $WORDS;
 
-/* ---------- Plein-écran automatique ----------------------------------- */
+/* ---------- Plein-écran pour ce document (iframe) --------------------- */
 function goFS(){
   const el=document.documentElement;
   if(!document.fullscreenElement && el.requestFullscreen){
@@ -174,19 +164,20 @@ function goFS(){
   }
 }
 window.addEventListener("load",   ()=>{goFS();setTimeout(goFS,500);});
-window.addEventListener("click",  goFS, {once:true});
-window.addEventListener("keydown",goFS, {once:true});
+window.addEventListener("click",  goFS,{once:true});
+window.addEventListener("keydown",goFS,{once:true});
 
-/* ---------- Mesure fréquence écran (≈2 s) ------------------------------ */
+/* ---------- Mesure fréquence écran ------------------------------------ */
 function estimateFPS(n=120){
   return new Promise(ok=>{
-    let t=[]; function s(ts){t.push(ts); t.length<n?requestAnimationFrame(s):
+    const t=[]; function s(ts){t.push(ts);
+      t.length<n?requestAnimationFrame(s):
       ok(1000/((t.slice(1).reduce((a,b,i)=>a+b-t[i],t[0]))/(n-1))); }
     requestAnimationFrame(s);
   });
 }
 
-/* ---------- Démarrage / blocage --------------------------------------- */
+/* ---------- Démarrage / blocage 60 Hz --------------------------------- */
 function init(){
   estimateFPS().then(fps=>{
     if(fps>55&&fps<65){document.body.focus();startExp();}
@@ -195,7 +186,7 @@ function init(){
         `<div style="text-align:center;font-size:32px;max-width:80%;color:#fff">
            <p><strong>Fréquence détectée&nbsp;: $${fps.toFixed(1)} Hz</strong></p>
            <p>Cette expérience est calibrée pour 60 Hz.</p>
-           <p>Merci d’utiliser ou de régler un moniteur 60 Hz puis de relancer.</p>
+           <p>Merci d’utiliser (ou de régler) un moniteur 60 Hz puis de relancer.</p>
          </div>`;
     }});
 }
@@ -240,7 +231,10 @@ function startExp(){
   }
 
   function fin(){
-    scr.style.fontSize="40px"; scr.textContent=$END_MSG; $DOWNLOAD }
+    /* ----- sortie plein-écran ----- */
+    if(document.fullscreenElement){document.exitFullscreen().catch(()=>{});}
+    scr.style.fontSize="40px"; scr.textContent=$END_MSG; $DOWNLOAD
+  }
   nextTrial();
 }
 init();
@@ -259,7 +253,7 @@ a.download="results.csv";
 a.textContent="Télécharger les résultats";
 a.style.fontSize="32px";a.style.marginTop="30px";
 document.body.appendChild(a);"""
-    down = down.replace("$","$$")                  # échapper $
+    down = down.replace("$","$$")  # échapper $
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(words),
@@ -270,19 +264,34 @@ document.body.appendChild(a);"""
     )
 
 # =============================================================================
-# 3. NAVIGATION STREAMLIT
+# 3. NAVIGATION STREAMLIT (plein-écran dès l’intro)
 # =============================================================================
 if "page" not in st.session_state:            st.session_state.page="intro"
 if "tirage_en_cours" not in st.session_state: st.session_state.tirage_en_cours=False
 if "tirage_ok"      not in st.session_state:  st.session_state.tirage_ok=False
 
-# ─────── INTRO ───────
+# ---- SCRIPT plein-écran injecté dans l’INTRO (fond blanc) -----------------
+fs_script = """
+<script>
+function goFS(){
+  const el=document.documentElement;
+  if(!document.fullscreenElement&&el.requestFullscreen){
+      el.requestFullscreen().catch(()=>{});
+  }
+}
+window.addEventListener("load", ()=>setTimeout(goFS,200));
+window.addEventListener("click", goFS,{once:true});
+window.addEventListener("keydown",goFS,{once:true});
+</script>"""
+# ---------------------------------------------------------------------------
+
+# ─────── PAGE INTRO ───────
 if st.session_state.page=="intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown(
         """
-**Important** : cette expérience ne fonctionne qu’avec un moniteur **60 Hz**  
-(un test automatique sera effectué et la page passe en plein-écran).
+**Important** – l’expérience est normalisée pour un écran **60 Hz**  
+(le plein-écran s’active automatiquement).
 
 **Principe**  
 Des mots seront présentés ≈ 17 ms (1 frame) puis masqués.
@@ -297,7 +306,10 @@ Des mots seront présentés ≈ 17 ms (1 frame) puis masqués.
 2. Test principal (80 mots)
         """
     )
+    # injection JS plein-écran
+    components.v1.html(fs_script, height=0, scrolling=False)
 
+    # tirage automatique
     if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
         st.session_state.tirage_en_cours=True; do_rerun()
 
@@ -319,7 +331,7 @@ Des mots seront présentés ≈ 17 ms (1 frame) puis masqués.
 elif st.session_state.page=="fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Fixez la croix, appuyez sur **Espace** quand le mot apparaît, "
-                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
+                "puis tapez-le et validez avec **Entrée**.")
     components.v1.html(
         experiment_html(PRACTICE_WORDS, with_download=False),
         height=650, scrolling=False
