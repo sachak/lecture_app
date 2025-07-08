@@ -3,7 +3,7 @@
 EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
 (familiarisation + test 80 mots)
 
-Exécution :  streamlit run exp3.py
+Exécution : streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
@@ -15,24 +15,23 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ────────────────────────── OUTIL RERUN ────────────────────────────────────
-def do_rerun():
-    (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
+# ────────────────────── OUTIL RERUN ────────────────────────────────────────
+def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
-# ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
+# ────────────────────── CONFIG STREAMLIT ───────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown(
     """
     <style>
       #MainMenu, header, footer{visibility:hidden;}
-      .css-1d391kg{display:none;}
+      .css-1d391kg{display:none;}                 /* ancien spinner */
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # =============================================================================
-# PARAMÈTRES DU TIRAGE
+# PARAMÈTRES DU TIRAGE (identiques)
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
@@ -47,7 +46,7 @@ NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS = ["PAIN", "EAU"]
 
 # =============================================================================
-# 1. OUTILS TIRAGE  (identiques)
+# 1. OUTILS TIRAGE  (inchangés)
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -61,8 +60,7 @@ def to_float(s: pd.Series) -> pd.Series:
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:
-    return -1 if "LOW" in tag else 1
+def cat_code(tag: str) -> int: return -1 if "LOW" in tag else 1
 
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
@@ -83,10 +81,9 @@ def load_sheets() -> dict[str, dict]:
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {name}"); st.stop()
 
-        for c in NUM_BASE + freq_cols:
-            df[c] = to_float(df[c])
+        for c in NUM_BASE + freq_cols: df[c] = to_float(df[c])
         df["ortho"] = df["ortho"].astype(str).str.upper()
-        df          = df.dropna(subset=need).reset_index(drop=True)
+        df = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean() for c in ("old20","pld20","nblettres","nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
@@ -152,7 +149,7 @@ def build_sheet()->pd.DataFrame:
     st.error("Impossible de générer la liste."); st.stop()
 
 # =============================================================================
-# 2. TEMPLATE HTML / JS  (60 Hz)
+# 2. TEMPLATE HTML / JS (60 Hz + plein-écran auto)
 # =============================================================================
 CROSS_FR, SHOW_START, STEP_FR, CYCLE_FR = 30, 1, 1, 20   # frames 60 Hz
 
@@ -160,39 +157,50 @@ HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
 html,body{height:100%;margin:0;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-family:'Courier New',monospace}
+align-items:center;justify-content:center;font-family:'Courier New',monospace;background:#000;color:#fff}
 #scr{font-size:60px;user-select:none}
-#ans{display:none;font-size:48px;width:60%;text-align:center}
+#ans{display:none;font-size:48px;width:60%;text-align:center;color:#000}
 </style></head>
-<body tabindex="0"><div id="scr"></div><input id="ans" autocomplete="off"/>
+<body tabindex="0">
+<div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 const WORDS = $WORDS;
 
-/* -------- Mesure fréquence écran -------- */
+/* ---------- Plein-écran automatique ----------------------------------- */
+function goFS(){
+  const el=document.documentElement;
+  if(!document.fullscreenElement && el.requestFullscreen){
+    el.requestFullscreen().catch(()=>{});
+  }
+}
+window.addEventListener("load",   ()=>{goFS();setTimeout(goFS,500);});
+window.addEventListener("click",  goFS, {once:true});
+window.addEventListener("keydown",goFS, {once:true});
+
+/* ---------- Mesure fréquence écran (≈2 s) ------------------------------ */
 function estimateFPS(n=120){
   return new Promise(ok=>{
-    let t=[];
-    function s(ts){t.push(ts);t.length<n?requestAnimationFrame(s):
+    let t=[]; function s(ts){t.push(ts); t.length<n?requestAnimationFrame(s):
       ok(1000/((t.slice(1).reduce((a,b,i)=>a+b-t[i],t[0]))/(n-1))); }
     requestAnimationFrame(s);
   });
 }
 
-/* -------- Départ ou blocage -------- */
+/* ---------- Démarrage / blocage --------------------------------------- */
 function init(){
   estimateFPS().then(fps=>{
     if(fps>55&&fps<65){document.body.focus();startExp();}
     else{
       document.body.innerHTML=
-        `<div style="text-align:center;font-size:32px;max-width:80%">
+        `<div style="text-align:center;font-size:32px;max-width:80%;color:#fff">
            <p><strong>Fréquence détectée&nbsp;: $${fps.toFixed(1)} Hz</strong></p>
            <p>Cette expérience est calibrée pour 60 Hz.</p>
-           <p>Merci d’utiliser (ou de régler) un moniteur 60 Hz puis
-              de relancer.</p></div>`;
+           <p>Merci d’utiliser ou de régler un moniteur 60 Hz puis de relancer.</p>
+         </div>`;
     }});
 }
 
-/* -------- Expérience en frames -------- */
+/* ---------- Boucle expérimentale (frames) ----------------------------- */
 function startExp(){
   let trial=0,results=[];
   const scr=document.getElementById("scr"),
@@ -212,7 +220,7 @@ function startExp(){
     function loop(){
       if(!active)return;
       scr.textContent = fc<show ? w : fc<$CYCLE_FR ? mask : scr.textContent;
-      if(fc++==$CYCLE_FR){show+=$STEP_FR;fc=0;}
+      if(++fc==$CYCLE_FR){show+=$STEP_FR;fc=0;}
       requestAnimationFrame(loop);
     } requestAnimationFrame(loop);
 
@@ -220,7 +228,8 @@ function startExp(){
       if(e.code==="Space"&&active){
         active=false;window.removeEventListener("keydown",onSp);
         const rt=Math.round(performance.now()-t0);
-        scr.textContent=""; ans.style.display="block"; ans.value=""; ans.focus();
+        scr.textContent="";
+        ans.style.display="block"; ans.value=""; ans.focus();
         ans.addEventListener("keydown",function onEnt(ev){
           if(ev.key==="Enter"){ev.preventDefault();
             results.push({word:w,rt_ms:rt,response:ans.value.trim()});
@@ -250,7 +259,7 @@ a.download="results.csv";
 a.textContent="Télécharger les résultats";
 a.style.fontSize="32px";a.style.marginTop="30px";
 document.body.appendChild(a);"""
-    down = down.replace("$","$$")
+    down = down.replace("$","$$")                  # échapper $
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(words),
@@ -272,11 +281,11 @@ if st.session_state.page=="intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown(
         """
-**Important** – cette expérience ne fonctionne qu’avec un moniteur **60 Hz**   
-(un test automatique sera effectué).
+**Important** : cette expérience ne fonctionne qu’avec un moniteur **60 Hz**  
+(un test automatique sera effectué et la page passe en plein-écran).
 
 **Principe**  
-Des mots seront brièvement présentés (≈ 17 ms = 1 frame) suivis d’un masque.
+Des mots seront présentés ≈ 17 ms (1 frame) puis masqués.
 
 **Votre tâche**  
 • Fixez la croix **+** au centre.  
@@ -284,8 +293,8 @@ Des mots seront brièvement présentés (≈ 17 ms = 1 frame) suivis d’un masq
 • Tapez-le ensuite puis **Entrée**.
 
 **Déroulement**  
-1. Familiarisation (2 mots) – 2 min  
-2. Test principal (80 mots) – 10 min
+1. Familiarisation (2 mots)  
+2. Test principal (80 mots)
         """
     )
 
