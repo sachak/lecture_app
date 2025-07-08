@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
-(familiarisation + test principal, vérification non-bloquante 60 Hz)
+(familiarisation + test principal, vérification 60 Hz non bloquante)
 
-Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1…Feuil4)
 """
+
 from __future__ import annotations
 
 import random
@@ -17,31 +17,30 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
-# ═════════════════ utilitaire « rerun » ═══════════════════════════════════
+# ───────────────────────── utilité « rerun » ──────────────────────────────
 def do_rerun():
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 
-# ═════════════════ config Streamlit ═══════════════════════════════════════
+# ───────────────────────── config Streamlit ───────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
 button:disabled{opacity:.45!important;cursor:not-allowed!important;}
-</style>
-""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
 
-# ═════════════════ état de session par défaut ═════════════════════════════
+# ───────────────────────── état de session ────────────────────────────────
 for k, v in dict(page="screen_test",
                  hz_ok=False,
                  tirage_running=False,
                  tirage_ok=False).items():
     st.session_state.setdefault(k, v)
-p = st.session_state                            # alias court
+p = st.session_state            # alias court
 
 
-# ═══════════ partie « tirage des mots » (identique à l’original) ══════════
+# ═════════════════════════ tirage des mots ════════════════════════════════
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -51,26 +50,23 @@ N_PER_FEUIL_TAG  = 5
 TAGS             = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 MAX_TRY_TAG      = MAX_TRY_FULL = 1_000
 rng              = random.Random()
-
-NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
+NUM_BASE         = ["nblettres", "nbphons", "old20", "pld20"]
 
 
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
-        .str.replace(r"[ ,\u00a0]", "", regex=True)
-        .str.replace(",", ".", regex=False),
-        errors="coerce",
+         .str.replace(r"[ ,\u00a0]", "", regex=True)
+         .str.replace(",", ".",  regex=False),
+        errors="coerce"
     )
 
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
-    return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(
-        drop=True
-    )
+    return df.sample(frac=1, random_state=rng.randint(0,1_000_000)).reset_index(drop=True)
 
 
-def cat_code(tag: str) -> int:
+def cat_code(tag: str) -> int:           # –1 pour LOW, +1 pour HIGH
     return -1 if "LOW" in tag else 1
 
 
@@ -79,14 +75,15 @@ def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
         st.error(f"{XLSX.name} introuvable"); st.stop()
 
-    xls = pd.ExcelFile(XLSX)
+    xls    = pd.ExcelFile(XLSX)
     sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheets) != 4:
         st.error("Il faut 4 feuilles Feuil1…Feuil4"); st.stop()
 
     feuilles, all_freq_cols = {}, set()
     for sh in sheets:
-        df = xls.parse(sh); df.columns = df.columns.str.strip().str.lower()
+        df = xls.parse(sh)
+        df.columns = df.columns.str.strip().str.lower()
         fq = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(fq)
 
@@ -101,9 +98,9 @@ def load_sheets() -> dict[str, dict]:
         df = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean() for c in
-                 ("old20", "pld20", "nblettres", "nbphons")}
+                 ("old20","pld20","nblettres","nbphons")}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in
-                  ("old20", "pld20", "nblettres", "nbphons") + tuple(fq)}
+                  ("old20","pld20","nblettres","nbphons") + tuple(fq)}
 
         feuilles[sh] = dict(df=df, stats=stats, freq_cols=fq)
 
@@ -111,7 +108,7 @@ def load_sheets() -> dict[str, dict]:
     return feuilles
 
 
-def masks(df, st_):                      # filtres booléens pour chaque tag
+def masks(df, st_):
     return dict(
         LOW_OLD  = df.old20 < st_["m_old20"] - st_["sd_old20"],
         HIGH_OLD = df.old20 > st_["m_old20"] + st_["sd_old20"],
@@ -132,15 +129,14 @@ def sd_ok(sub, st_, fq):
 
 def mean_lp_ok(s, st_):
     return (
-        abs(s.nblettres.mean() - st_["m_nblettres"])
-            <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
-        abs(s.nbphons.mean()  - st_["m_nbphons"])
-            <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
+        abs(s.nblettres.mean() - st_["m_nblettres"]) <= MEAN_DELTA["letters"]*st_["sd_nblettres"] and
+        abs(s.nbphons.mean()  - st_["m_nbphons"])    <= MEAN_DELTA["phons"]  *st_["sd_nbphons"]
     )
 
 
 def pick_five(tag, feuille, used, F):
-    df, st_ = F[feuille]["df"], F[feuille]["stats"]; fq = F[feuille]["freq_cols"]
+    df, st_ = F[feuille]["df"], F[feuille]["stats"]
+    fq      = F[feuille]["freq_cols"]
 
     pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
@@ -148,9 +144,8 @@ def pick_five(tag, feuille, used, F):
 
     for _ in range(MAX_TRY_TAG):
         samp = pool.sample(N_PER_FEUIL_TAG,
-                           random_state=rng.randint(0, 1_000_000)).copy()
+                           random_state=rng.randint(0,1_000_000)).copy()
 
-        # moyenne suffisamment éloignée
         if tag=="LOW_OLD"  and samp.old20.mean() >= st_["m_old20"]-MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
         if tag=="HIGH_OLD" and samp.old20.mean() <= st_["m_old20"]+MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
         if tag=="LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"]-MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
@@ -172,8 +167,7 @@ def build_sheet() -> pd.DataFrame:
 
     for _ in range(MAX_TRY_FULL):
         taken  = {sh:set() for sh in F if sh!="all_freq_cols"}
-        groups = []; ok = True
-
+        groups = []; ok=True
         for tag in TAGS:
             bloc=[]
             for sh in taken:
@@ -182,7 +176,6 @@ def build_sheet() -> pd.DataFrame:
                 bloc.append(sub); taken[sh].update(sub.ortho)
             if not ok: break
             groups.append(shuffled(pd.concat(bloc, ignore_index=True)))
-
         if ok:
             df = pd.concat(groups, ignore_index=True)
             order = ["ortho"] + NUM_BASE + all_freq + ["source","group","old_cat","pld_cat"]
@@ -191,7 +184,7 @@ def build_sheet() -> pd.DataFrame:
     st.error("Impossible de générer la liste."); st.stop()
 
 
-# ═════════════════ HTML – test 60 Hz (toujours visible) ═══════════════════
+# ═════════════════ HTML / JS – Test de fréquence 60 Hz ════════════════════
 TEST60_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -199,25 +192,23 @@ html,body{height:100%;margin:0;background:#000;color:#fff;
 display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 #res{font-size:48px;margin:30px 0}button{font-size:24px;padding:8px 28px}
 </style></head><body>
-<h2>Test de fréquence (60&nbsp;Hz)</h2>
+<h2>Test de fréquence&nbsp;: 60&nbsp;Hz</h2>
 <div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
 <script>
 function mesure(){
   const res=document.getElementById('res'), btn=document.getElementById('go');
   btn.disabled=true; res.textContent='Mesure en cours…'; res.style.color='#fff';
-  let frames=0, t0=performance.now();
+  let f=0, t0=performance.now();
   function loop(){
-    frames++;
-    if(frames<120){ requestAnimationFrame(loop); }
+    f++; if(f<120){ requestAnimationFrame(loop); }
     else{
-      const hz=frames*1000/(performance.now()-t0);
-      const ok=(hz>58)&&(hz<62);
+      const hz=f*1000/(performance.now()-t0);
+      const ok=hz>58&&hz<62;
       res.textContent='≈ '+hz.toFixed(1)+' Hz';
-      res.style.color = ok ? 'lime' : 'red';
+      res.style.color = ok ? 'lime':'red';
       btn.disabled=false;
       if(ok){ Streamlit.setComponentValue('ok'); }
-    }
-  }
+    }}
   requestAnimationFrame(loop);
 }
 Streamlit.setComponentReady();
@@ -226,44 +217,42 @@ Streamlit.setComponentReady();
 
 
 # ═════════════════ navigation multi-pages ═════════════════════════════════
-# 0 — test d’écran 60 Hz
+
+# ─── 0 : test d’écran (toujours affiché) ──────────────────────────────────
 if p.page == "screen_test":
-    st.subheader("Vérification (facultative) de la fréquence d’écran")
+    st.subheader("1. Vérification de la fréquence d’écran")
 
     hz_val = components.html(TEST60_HTML, height=600, scrolling=False)
-    if hz_val == "ok":
-        p.hz_ok = True
 
-    if p.hz_ok:
-        st.success("Fréquence ≈ 60 Hz détectée.")
-    else:
-        st.info("Cliquez sur « Démarrer » pour lancer le test "
-                "(vous pourrez quand même continuer).")
+    # si la JS renvoie « ok » on sauve l’état et on relance immédiatement
+    if hz_val == "ok" and not p.hz_ok:
+        p.hz_ok = True
+        do_rerun()                       # ← rerun immédiat !
+
+    st.success("Fréquence ≈ 60 Hz détectée.") if p.hz_ok else \
+        st.info("Cliquez sur « Démarrer » pour lancer la mesure.")
 
     if st.button("Passer à la présentation ➜"):
         p.page = "intro" if p.hz_ok else "hz_fail"
         do_rerun()
 
 
-# page affichée uniquement si test non réussi
+# ─── 0-bis : écran pas 60 Hz ──────────────────────────────────────────────
 elif p.page == "hz_fail":
     st.error("Votre écran n’est pas réglé sur 60 Hz.")
     st.markdown("""
-L’expérience nécessite un affichage rafraîchi à **60 Hz**.
+Cette expérience nécessite un taux de rafraîchissement de **60 Hz**.
 
-• Vérifiez ou modifiez la fréquence dans les paramètres d’affichage  
-• Reconnectez-vous avec un moniteur 60 Hz si nécessaire  
-• Revenez ensuite effectuer le test
-
-    """)
+• Réglez la fréquence dans les paramètres système ou utilisez un moniteur 60 Hz.  
+• Revenez ensuite effectuer à nouveau le test.
+""")
     if st.button("⟵ Refaire le test 60 Hz"):
-        p.page = "screen_test"
-        do_rerun()
+        p.page = "screen_test"; do_rerun()
 
 
-# 1 — introduction + tirage
+# ─── 1 : introduction + tirage ────────────────────────────────────────────
 elif p.page == "intro":
-    st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
+    st.subheader("2. Présentation de la tâche")
     st.markdown("""
 Des mots seront présentés très brièvement puis masqués (`#####`).
 
@@ -279,7 +268,7 @@ Des mots seront présentés très brièvement puis masqués (`#####`).
 
     elif p.tirage_running and not p.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
-            df = build_sheet()
+            df   = build_sheet()
             mots = df["ortho"].tolist(); random.shuffle(mots)
             p.stimuli = mots
             p.tirage_ok, p.tirage_running = True, False
@@ -290,26 +279,23 @@ Des mots seront présentés très brièvement puis masqués (`#####`).
             p.page = "fam"; do_rerun()
 
 
-# 2 — familiarisation
+# ─── 2 : familiarisation ─────────────────────────────────────────────────
 elif p.page == "fam":
     st.header("Familiarisation (2 mots)")
-    st.markdown("Appuyez sur **ESPACE** quand le mot apparaît, puis saisissez-le.")
+    st.markdown("Appuyez sur **ESPACE** dès que le mot apparaît, tapez-le, puis **Entrée**.")
 
-    components.html(
-        "<p style='background:black;color:white;height:450px;"
-        "display:flex;align-items:center;justify-content:center'>"
-        "Tâche de familiarisation – à remplacer par votre code</p>",
-        height=450, scrolling=False
-    )
+    components.html("<p style='background:black;color:white;height:450px;"
+                    "display:flex;align-items:center;justify-content:center'>"
+                    "Tâche de familiarisation – à implémenter</p>",
+                    height=450, scrolling=False)
+
     if st.button("Passer au test principal"):
         p.page = "exp"; do_rerun()
 
 
-# 3 — test principal
+# ─── 3 : test principal ──────────────────────────────────────────────────
 elif p.page == "exp":
-    components.html(
-        "<p style='background:black;color:white;height:450px;"
-        "display:flex;align-items:center;justify-content:center'>"
-        "Test principal (80 mots) – à remplacer</p>",
-        height=450, scrolling=False
-    )
+    components.html("<p style='background:black;color:white;height:450px;"
+                    "display:flex;align-items:center;justify-content:center'>"
+                    "Test principal (80 mots) – à implémenter</p>",
+                    height=450, scrolling=False)
