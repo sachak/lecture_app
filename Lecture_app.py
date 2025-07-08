@@ -15,12 +15,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
-# ───────────────────────── utilitaire rerun ──────────────────────────────
+# ───────────────── utilitaire « rerun » ───────────────────────────────────
 def do_rerun():
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 
-# ─────────────────────── configuration Streamlit ─────────────────────────
+# ───────────────── configuration Streamlit ───────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
@@ -30,16 +30,16 @@ button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 """, unsafe_allow_html=True)
 
 
-# ───────────────────────── état par défaut ───────────────────────────────
+# ───────────────── état par défaut ───────────────────────────────────────
 for k, v in dict(page="screen_test",
                  hz_val=None,          # fréquence mesurée (float) ou None
                  tirage_running=False,
                  tirage_ok=False).items():
     st.session_state.setdefault(k, v)
-p = st.session_state                                 # alias court
+p = st.session_state
 
 
-# ─────────────────────── constantes / tirage mots ───────────────────────
+# ───────────────── constantes & fonctions « tirage » (inchangées) ────────
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -53,7 +53,6 @@ rng              = random.Random()
 NUM_BASE = ["nblettres", "nbphons", "old20", "pld20"]
 
 
-# ─────────────────────── fonctions utilitaires tirage ────────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
@@ -61,9 +60,11 @@ def to_float(s: pd.Series) -> pd.Series:
          .str.replace(",", ".", regex=False),
         errors="coerce")
 
+
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1,
                      random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
+
 
 def cat_code(tag: str) -> int:
     return -1 if "LOW" in tag else 1
@@ -115,6 +116,7 @@ def masks(df, st_) -> dict[str, pd.Series]:
         LOW_PLD  = df.pld20 < st_["m_pld20"] - st_["sd_pld20"],
         HIGH_PLD = df.pld20 > st_["m_pld20"] + st_["sd_pld20"])
 
+
 def sd_ok(sub, st_, fq) -> bool:
     return (
         sub.nblettres.std(ddof=0) <= st_["sd_nblettres"] * SD_MULT["letters"] and
@@ -123,12 +125,14 @@ def sd_ok(sub, st_, fq) -> bool:
         sub.pld20.std(ddof=0)     <= st_["sd_pld20"]     * SD_MULT["pld20"]   and
         all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq))
 
+
 def mean_lp_ok(s, st_) -> bool:
     return (
         abs(s.nblettres.mean() - st_["m_nblettres"])
             <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
         abs(s.nbphons.mean()  - st_["m_nbphons"])
             <= MEAN_DELTA["phons"]   * st_["sd_nbphons"])
+
 
 def pick_five(tag, feuille, used, F):
     df, st_ = F[feuille]["df"], F[feuille]["stats"]
@@ -160,6 +164,7 @@ def pick_five(tag, feuille, used, F):
         return samp
     return None
 
+
 def build_sheet() -> pd.DataFrame:
     F        = load_sheets()
     all_freq = F["all_freq_cols"]
@@ -186,7 +191,7 @@ def build_sheet() -> pd.DataFrame:
     st.error("Impossible de générer la liste."); st.stop()
 
 
-# ────────────────────── composant HTML : test écran ──────────────────────
+# ───────────────── composant HTML / JS : test fréquence ──────────────────
 TEST_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -206,8 +211,11 @@ function mesure(){
   function loop(){
     f++; if(f<120){ requestAnimationFrame(loop); }
     else{
-      const hz=f*1000/(performance.now()-t0);
-      Streamlit.setComponentValue(hz.toFixed(1));   // envoi la valeur à Python
+      const hz=f*1000/(performance.now()-t0),
+            good=Math.abs(hz-60)<1.5;
+      res.textContent='≈ '+hz.toFixed(1)+' Hz';
+      res.style.color = good ? 'lime':'red';
+      Streamlit.setComponentValue(hz.toFixed(1));   // envoi à Python
       b.disabled=false;
     }}
   requestAnimationFrame(loop);
@@ -217,37 +225,37 @@ Streamlit.setComponentReady();
 """
 
 
-# ──────────────────── outil : arrondir à fréquence « commerce » ──────────
+# ───────────────── outil : arrondir à la fréquence « commerce » ───────────
 COMMERCIAL = [60, 75, 90, 120, 144]
 def nearest_hz(x: float) -> int:
     return min(COMMERCIAL, key=lambda v: abs(v - x))
 
 
-# ───────────────────────── fonction navigation ───────────────────────────
+# ───────────────── navigation ────────────────────────────────────────────
 def go(page: str):
     p.page = page
     do_rerun()
 
 
-# ───────────────────────────────── pages ─────────────────────────────────
-# 0. — test fréquence écran
+# ───────────────────────────────── PAGES ─────────────────────────────────
+# 0. — Test fréquence écran
 if p.page == "screen_test":
     st.subheader("1. Vérification (facultative) de la fréquence d’écran")
 
-    # clé uniquement si la version de Streamlit l’accepte
+    # appel à components.html (avec ou sans key selon version)
+    html_kwargs = dict(height=520, scrolling=False)
     if "key" in inspect.signature(components.html).parameters:
-        val = components.html(TEST_HTML, key="hz_test", height=520, scrolling=False)
-    else:
-        val = components.html(TEST_HTML,              height=520, scrolling=False)
+        html_kwargs["key"] = "hz_test"
+    val = components.html(TEST_HTML, **html_kwargs)
 
-    # val peut être None, str, int, float ou … DeltaGenerator (selon versions)
-    if isinstance(val, (float, int, str)):
+    # récupération de la valeur renvoyée
+    if isinstance(val, (int, float, str)):
         try:
             p.hz_val = float(val)
         except ValueError:
-            pass     # ignore si conversion impossible
+            pass  # ignore si conversion impossible
 
-    # Affichage du résultat simplifié
+    # affichage du résultat simplifié
     if p.hz_val is not None:
         hz_r = nearest_hz(p.hz_val)
         if hz_r == 60:
@@ -259,12 +267,11 @@ if p.page == "screen_test":
         st.info("Cliquez sur « Démarrer » pour lancer la mesure.")
 
     st.divider()
-    # bouton toujours disponible
     if st.button("Suivant ➜"):
         go("intro")
 
 
-# 1. — présentation + tirage
+# 1. — Présentation + tirage
 elif p.page == "intro":
     st.subheader("2. Présentation de la tâche")
     st.markdown("""
@@ -282,7 +289,7 @@ Des mots seront affichés très brièvement puis masqués (`#####`).
 
     elif p.tirage_running and not p.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
-            df   = build_sheet()
+            df = build_sheet()
             mots = df["ortho"].tolist(); random.shuffle(mots)
             p.stimuli = mots
             p.tirage_ok, p.tirage_running = True, False
@@ -292,7 +299,7 @@ Des mots seront affichés très brièvement puis masqués (`#####`).
         go("fam")
 
 
-# 2. — familiarisation
+# 2. — Familiarisation
 elif p.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.write("Appuyez sur **ESPACE** dès que le mot apparaît, "
@@ -308,7 +315,7 @@ elif p.page == "fam":
         go("exp")
 
 
-# 3. — test principal
+# 3. — Test principal
 elif p.page == "exp":
     st.header("Test principal (80 mots)")
     components.html(
