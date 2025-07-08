@@ -209,7 +209,7 @@ def build_sheet() -> pd.DataFrame:
     st.stop()
 
 
-# ═════════════════ HTML – test 60 Hz (id ajouté) ═══════════════════════════
+# ═════════════════ HTML – test 60 Hz (API Streamlit) ═══════════════════════
 TEST60_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -224,39 +224,33 @@ display:flex;flex-direction:column;align-items:center;justify-content:center;tex
 const res = document.getElementById("res");
 const btn = document.getElementById("go");
 
-function sendToStreamlit(value){
-  // identifiant de l'iframe qui héberge le composant
-  const id = window.frameElement.id;
-  window.parent.postMessage(
-    {isStreamlitMessage:true, type:"streamlit:setComponentValue", id:id, value:value},
-    "*"
-  );
-}
-
-btn.onclick = () => {
+function mesure(){
   btn.disabled = true;
   res.style.color = "#fff";
   res.textContent = "Mesure en cours…";
 
   const t = [];
-  const n = 120;
+  const N = 120;
 
   function step(k){
     t.push(k);
-    if (t.length < n){
+    if (t.length < N){
       requestAnimationFrame(step);
     } else {
-      const d  = t.slice(1).map((v,i) => v - t[i]);
+      const d  = t.slice(1).map((v,i)=>v-t[i]);
       const hz = 1000 / (d.reduce((a,b)=>a+b,0) / d.length);
       res.textContent = "≈ " + hz.toFixed(1) + " Hz";
       const ok = hz > 58 && hz < 62;
-      res.style.color  = ok ? "lime" : "red";
+      res.style.color = ok ? "lime" : "red";
       btn.disabled = false;
-      if (ok){ sendToStreamlit("ok"); }
+      if (ok){ Streamlit.setComponentValue("ok"); }
     }
   }
   requestAnimationFrame(step);
-};
+}
+
+Streamlit.setComponentReady();   // signale à Streamlit que tout est chargé
+btn.addEventListener("click", mesure);
 </script></body></html>
 """
 
@@ -266,13 +260,18 @@ btn.onclick = () => {
 if st.session_state.page == "screen_test":
     st.write("### Vérification de l’écran (60 Hz requis)")
     hz_val = components.html(TEST60_HTML, height=600, scrolling=False)
+
     if hz_val == "ok":
         st.session_state.hz_ok = True
+        st.experimental_rerun()          # force le rerun → le bouton apparaît
 
-    if st.button("Passer à la présentation ➜",
-                 disabled=not st.session_state.hz_ok):
-        st.session_state.page = "intro"
-        do_rerun()
+    if st.session_state.hz_ok:
+        if st.button("Passer à la présentation ➜"):
+            st.session_state.page = "intro"
+            do_rerun()
+    else:
+        st.info("Effectuez d’abord le test, puis recommencez.")
+
 
 # page 1 : introduction + tirage
 elif st.session_state.page == "intro":
