@@ -275,7 +275,6 @@ if p.page == "screen_test":
             TEST60_HTML,
             height=600,
             scrolling=False,
-            key="test60",  # même instance pendant tout le test
         )
         if hz_val == "ok":
             p.hz_ok, p.test_started = True, False
