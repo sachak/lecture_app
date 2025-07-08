@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
-(familiarisation + test 80 mots)
+(familiarisation + test 80 mots, timing à la frame / 60 Hz)
 
 Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
@@ -16,18 +16,22 @@ from streamlit import components
 
 # ────────────────────────── OUTIL RERUN ────────────────────────────────────
 def do_rerun():
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        st.experimental_rerun()
+    (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 # ───────────────────────── CONFIG STREAMLIT ────────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
-.css-1d391kg {display:none;}  /* ancien spinner */
+.css-1d391kg {display:none;}         /* ancien spinner                      */
 </style>""", unsafe_allow_html=True)
+
+# =============================================================================
+# 0.  ETATS PERSISTANTS
+# =============================================================================
+if "page"            not in st.session_state: st.session_state.page            = "screen_test"
+if "tirage_ok"       not in st.session_state: st.session_state.tirage_ok       = False
+if "tirage_running"  not in st.session_state: st.session_state.tirage_running  = False
 
 # =============================================================================
 # 1. PARAMÈTRES DU TIRAGE
@@ -47,7 +51,7 @@ NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS = ["PAIN", "EAU"]
 
 # =============================================================================
-# 2. OUTILS
+# 2. OUTILS DIVERS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s.astype(str)
@@ -84,8 +88,8 @@ def load_sheets() -> dict[str, dict]:
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {sh}"); st.stop()
 
-        for col in NUM_BASE + freq_cols:
-            df[col] = to_float(df[col])
+        for c in NUM_BASE + freq_cols:
+            df[c] = to_float(df[c])
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
 
@@ -151,34 +155,69 @@ def build_sheet() -> pd.DataFrame:
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
 # =============================================================================
-# 4. GÉNÉRATION HTML / JS
+# 4.  HTML :  A) TEST 60 Hz  •  B) EXPERIENCE (rAF)
 # =============================================================================
-HTML_TPL = Template(r"""
+TEST60_HTML = r"""
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"/>
+<style>
+html,body{height:100%;margin:0;background:#000;color:#fff;
+          display:flex;flex-direction:column;align-items:center;justify-content:center;
+          font-family:Arial,Helvetica,sans-serif;text-align:center}
+#res{font-size:48px;margin:30px 0}
+button{font-size:24px;padding:8px 20px}
+</style>
+</head>
+<body>
+<h2>Test de fréquence d’écran (cible&nbsp;: 60 Hz)</h2>
+<p>Cliquez sur « Démarrer ».<br/>Le programme mesure la fréquence réelle de votre moniteur.</p>
+<div id="res">--</div>
+<button id="start">Démarrer</button>
+<button id="go" disabled>Continuer</button>
+
+<script>
+const res = document.getElementById("res");
+document.getElementById("start").onclick = ()=>{
+  document.getElementById("start").disabled=true;
+  let times=[], n=150;
+  function step(t){
+    times.push(t);
+    if(times.length<n){ requestAnimationFrame(step); }
+    else{
+      let deltas=[];
+      for(let i=2;i<times.length;i++){ deltas.push(times[i]-times[i-1]); }
+      const mean = deltas.reduce((a,b)=>a+b,0)/deltas.length;
+      const hz   = 1000/mean;
+      res.textContent = `≈ ${hz.toFixed(1)} Hz`;
+      const ok = hz>58 && hz<62;
+      res.style.color = ok? "lime" : "red";
+      if(ok) document.getElementById("go").disabled=false;
+      document.getElementById("start").disabled=false;
+    }
+  }
+  requestAnimationFrame(step);
+};
+
+document.getElementById("go").onclick = ()=>{
+  window.parent.postMessage({passed:true},"*");
+};
+</script>
+</body>
+</html>
+"""
+
+# ---------------------------------------------------------------------------
+EXP_HTML = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"/>
 <style>
 html,body{
-    height:100%;
-    margin:0;
-    background:#000;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    justify-content:center;
-    font-family:'Courier New',monospace;
-}
-#scr{
-    font-size:60px;
-    color:#fff;
-    user-select:none;
-}
-#ans{
-    display:none;
-    font-size:48px;
-    width:60%;
-    text-align:center;
-}
+  height:100%;margin:0;background:#000;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;font-family:'Courier New',monospace}
+#scr{font-size:60px;color:#fff;user-select:none}
+#ans{display:none;font-size:48px;width:60%;text-align:center}
 </style>
 </head>
 <body tabindex="0">
@@ -186,125 +225,154 @@ html,body{
 <input id="ans" autocomplete="off"/>
 <script>
 window.addEventListener("load",()=>document.body.focus());
-const WORDS = $WORDS;
-const CYCLE = $CYCLE;
-const START = $START;
-const STEP  = $STEP;
+const WORDS   = $WORDS;
+const CYCLE_F = $CYCLE_F;   // frames «mot+masque»
+const START_F = $START_F;   // frames 1ᵉʳ affichage
+const STEP_F  = $STEP_F;    // +frames après chaque cycle
 
 let trial = 0;
 let results = [];
 const scr = document.getElementById("scr");
 const ans = document.getElementById("ans");
 
-function nextTrial(){
-  if(trial >= WORDS.length){ endExperiment(); return; }
+function waitFrames(n, cb){      // attente n frames puis callback
+  let c = 0;
+  function step(){ if(c++>=n){ cb(); } else{ requestAnimationFrame(step);} }
+  requestAnimationFrame(step);
+}
+
+function present(){              // déroulement d’UN essai
+  if(trial>=WORDS.length){ fin(); return; }
   const w = WORDS[trial];
   const mask = "#".repeat(w.length);
-
-  let showDur = START;
-  let hideDur = CYCLE - showDur;
-  let tShow, tHide;
+  let showF = START_F;
+  let hideF = CYCLE_F - showF;
   const t0 = performance.now();
   let active = true;
 
-  (function loop(){
+  function cycle(){
     if(!active) return;
     scr.textContent = w;
-    tShow = setTimeout(()=>{ if(!active) return;
+    waitFrames(showF, ()=>{ if(!active) return;
       scr.textContent = mask;
-      tHide = setTimeout(()=>{ if(active){
-          showDur += STEP;
-          hideDur = Math.max(0, CYCLE - showDur);
-          loop();
-      }}, hideDur);
-    }, showDur);
-  })();
+      waitFrames(hideF, ()=>{ if(!active) return;
+        showF += STEP_F;
+        hideF  = Math.max(0, CYCLE_F-showF);
+        cycle();
+      });
+    });
+  }
+  cycle();
 
   function onSpace(e){
-    if(e.code === "Space" && active){
-      active = false;
-      clearTimeout(tShow); clearTimeout(tHide);
-      const rt = Math.round(performance.now() - t0);
-      window.removeEventListener("keydown", onSpace);
-      scr.textContent = "";
-      ans.style.display = "block"; ans.value = ""; ans.focus();
-      ans.addEventListener("keydown", function onEnter(ev){
+    if(e.code==="Space" && active){
+      active=false;
+      const rt=Math.round(performance.now()-t0);
+      window.removeEventListener("keydown",onSpace);
+      scr.textContent="";
+      ans.style.display="block"; ans.value=""; ans.focus();
+      ans.addEventListener("keydown",function onEnter(ev){
         if(ev.key==="Enter"){
           ev.preventDefault();
-          results.push({word:w, rt_ms:rt, response:ans.value.trim()});
-          ans.removeEventListener("keydown", onEnter);
-          ans.style.display = "none";
-          trial += 1; nextTrial();
+          results.push({word:w,rt_ms:rt,response:ans.value.trim()});
+          ans.removeEventListener("keydown",onEnter);
+          ans.style.display="none";
+          trial++; present();
         }
       });
     }
   }
-  window.addEventListener("keydown", onSpace);
+  window.addEventListener("keydown",onSpace);
 }
 
-function endExperiment(){
-  scr.style.fontSize = "40px";
-  scr.textContent = $END_MSG;
+function fin(){
+  scr.style.fontSize="40px";
+  scr.textContent=$END_MSG;
   $DOWNLOAD
 }
+
 $STARTER
 </script>
 </body>
 </html>
 """)
 
-def experiment_html(words, *, with_download=True,
-                    cycle_ms=350, start_ms=14, step_ms=14,
-                    fullscreen=False):
-    # téléchargement ---------------------------------------------------------
-    download_js = ""
+# -------------------------------------------------- Génération des deux HTML
+def calibration_html()->str:
+    return TEST60_HTML
+
+def experiment_html(words, *, cycle_frames=21, start_frames=1, step_frames=1,
+                    with_download=True, fullscreen=False):
+    # téléchargement --------------------------------------------------------
+    download_js=""
     if with_download:
-        download_js = r"""
-const csv = ["word;rt_ms;response",
-             ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)].join("\n");
-const a = document.createElement("a");
-a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-a.download = "results.csv";
-a.textContent = "Télécharger les résultats";
-a.style.fontSize = "32px";
-a.style.marginTop = "30px";
+        download_js=r"""
+const csv=["word;rt_ms;response",
+           ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
+const a=document.createElement("a");
+a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+a.download="results.csv";
+a.textContent="Télécharger les résultats";
+a.style.fontSize="32px";
+a.style.marginTop="30px";
 document.body.appendChild(a);"""
-    download_js = download_js.replace("$","$$")
+    download_js=download_js.replace("$","$$")
 
-    # démarrage --------------------------------------------------------------
+    # démarrage -------------------------------------------------------------
     if fullscreen:
-        starter_js = r"""
-scr.textContent = "Appuyez sur la barre ESPACE pour commencer";
-function firstKey(e){
-    if(e.code==="Space"){
-        window.removeEventListener("keydown", firstKey);
-        document.documentElement.requestFullscreen?.();
-        nextTrial();
-    }
+        starter_js=r"""
+scr.textContent="Appuyez sur la barre ESPACE pour commencer";
+function first(e){
+  if(e.code==="Space"){
+    window.removeEventListener("keydown",first);
+    document.documentElement.requestFullscreen?.();
+    present();
+  }
 }
-window.addEventListener("keydown", firstKey);"""
+window.addEventListener("keydown",first);"""
     else:
-        starter_js = "nextTrial();"
+        starter_js="present();"
 
-    return HTML_TPL.substitute(
+    return EXP_HTML.substitute(
         WORDS=json.dumps(words),
-        CYCLE=cycle_ms,
-        START=start_ms,
-        STEP=step_ms,
+        CYCLE_F=cycle_frames,
+        START_F=start_frames,
+        STEP_F =step_frames,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
         DOWNLOAD=download_js,
         STARTER=starter_js
     )
 
 # =============================================================================
-# 5. NAVIGATION STREAMLIT
+# 5. PAGES STREAMLIT
 # =============================================================================
-if "page" not in st.session_state:       st.session_state.page       = "intro"
-if "tirage_ok" not in st.session_state:  st.session_state.tirage_ok  = False
-if "tirage_run" not in st.session_state: st.session_state.tirage_run = False
+# ───────────────────────── PAGE 0 : TEST 60 Hz ─────────────────────────────
+if st.session_state.page=="screen_test":
+    st.empty()  # supprimer marges
+    comp=components.v1.html(calibration_html(),height=600,scrolling=False)
 
-# ─────────────────────────── PAGE INTRO ────────────────────────────────────
-if st.session_state.page == "intro":
+    # écoute du message JS « passed »
+    msg=st.components.v1.html("""
+    <script>
+    window.addEventListener("message",e=>{
+      if(e.data && e.data.passed){
+        window.parent.postMessage("go","*");
+      }
+    });
+    </script>""",height=0)
+    # petit contournement : un bouton invisible déclenché par JS
+    if st.button("-",key="hidden_go",help="",disabled=True):
+        pass
+    # Streamlit ne peut pas recevoir postMessage directement ; on invite
+    # volontairement la personne à cliquer sur « Continuer » (côté JS) puis
+    # sur le bouton Streamlit ci-dessous :
+    st.write("")
+    if st.button("Passer à la présentation ➜"):
+        st.session_state.page="intro"
+        do_rerun()
+
+# ───────────────────────── PAGE 1 : INTRO & TIRAGE ─────────────────────────
+elif st.session_state.page=="intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown("""
 Des mots apparaîtront très brièvement puis seront masqués (suite de “#”).
@@ -315,42 +383,40 @@ Des mots apparaîtront très brièvement puis seront masqués (suite de “#”)
 
 1. Entraînement (2 mots)  2. Test principal (80 mots)
 """)
+    if not st.session_state.tirage_running and not st.session_state.tirage_ok:
+        st.session_state.tirage_running=True; do_rerun()
 
-    # tirage automatique
-    if not st.session_state.tirage_run and not st.session_state.tirage_ok:
-        st.session_state.tirage_run = True; do_rerun()
-
-    if st.session_state.tirage_run and not st.session_state.tirage_ok:
+    if st.session_state.tirage_running and not st.session_state.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
-            df = build_sheet()
-            mots = df["ortho"].tolist(); random.shuffle(mots)
-            st.session_state.tirage_df = df
-            st.session_state.stimuli   = mots
-            st.session_state.tirage_ok = True
-            st.session_state.tirage_run = False
+            df=build_sheet()
+            mots=df["ortho"].tolist(); random.shuffle(mots)
+            st.session_state.stimuli=mots
+            st.session_state.tirage_ok=True
+            st.session_state.tirage_running=False
         st.success("Tirage terminé !")
 
     if st.session_state.tirage_ok:
         if st.button("Commencer la familiarisation"):
-            st.session_state.page = "fam"; do_rerun()
+            st.session_state.page="fam"; do_rerun()
 
-# ───────────────────────── PAGE FAMILIARISATION ────────────────────────────
-elif st.session_state.page == "fam":
+# ───────────────────────── PAGE 2 : FAMILIARISATION ────────────────────────
+elif st.session_state.page=="fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **ESPACE** dès que le mot apparaît, tapez-le puis **Entrée**.")
     components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False),
-        height=650, scrolling=False
+        experiment_html(PRACTICE_WORDS,with_download=False,
+                        cycle_frames=21,start_frames=1,step_frames=1),
+        height=650,scrolling=False
     )
     st.divider()
     if st.button("Passer au test principal"):
-        st.session_state.page = "exp"; do_rerun()
+        st.session_state.page="exp"; do_rerun()
 
-# ────────────────────────── PAGE TEST DIRECT ───────────────────────────────
-elif st.session_state.page == "exp":
+# ───────────────────────── PAGE 3 : TEST PRINCIPAL ─────────────────────────
+elif st.session_state.page=="exp":
     components.v1.html(
         experiment_html(st.session_state.stimuli,
-                        with_download=True,
-                        fullscreen=True),
-        height=700, scrolling=False
+                        cycle_frames=21,start_frames=1,step_frames=1,
+                        with_download=True,fullscreen=True),
+        height=700,scrolling=False
     )
