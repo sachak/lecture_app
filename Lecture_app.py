@@ -11,6 +11,7 @@ from __future__ import annotations
 # ───────────────────────────── IMPORTS ──────────────────────────────────────
 import json, random
 from pathlib import Path
+from string import Template                # pour l’HTML
 
 import pandas as pd
 import streamlit as st
@@ -124,9 +125,9 @@ def pick_five(tag, feuille, used, F):
 
     for _ in range(MAX_TRY_TAG):
         samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0, 1_000_000)).copy()
-        if tag == "LOW_OLD" and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
+        if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
         if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]: continue
-        if tag == "LOW_PLD" and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
+        if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
         if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD*st_["sd_pld20"]: continue
         if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fqs): continue
         samp["source"], samp["group"] = feuille, tag
@@ -155,55 +156,129 @@ def build_sheet() -> pd.DataFrame:
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
 # =============================================================================
-# 4. GÉNÉRATION HTML/JS POUR L’EXPÉRIMENTATION
+# 4. HTML / JS (aucune accolade à doubler, on utilisera string.Template)
 # =============================================================================
-def experiment_html(words, with_download=True, cycle_ms=350, start_ms=14, step_ms=14):
-    download_js = ""
-    end_message = "Merci !" if with_download else "Fin de l’entraînement"
-    if with_download:
-        download_js = """
-    const csv = ["word;rt_ms;response",
-                 ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)]
-                .join("\\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
-    a.download = "results.csv";
-    a.textContent = "Télécharger les résultats";
-    a.style.fontSize = "32px";
-    a.style.marginTop = "30px";
-    document.body.appendChild(a);
-        """
-    return f"""
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
-<style>html,body{{height:100%;margin:0;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-family:'Courier New',monospace}}
-#scr{{font-size:60px;user-select:none}}#ans{{display:none;font-size:48px;width:60%;
-text-align:center}}</style></head><body tabindex="0">
-<div id="scr"></div><input id="ans" autocomplete="off"/>
+HTML_TEMPLATE = Template(r"""
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"/>
+<style>
+html,body{height:100%;margin:0;display:flex;flex-direction:column;
+align-items:center;justify-content:center;font-family:'Courier New',monospace}
+#scr{font-size:60px;user-select:none}
+#ans{display:none;font-size:48px;width:60%;text-align:center}
+</style>
+</head>
+<body tabindex="0">
+<div id="scr"></div>
+<input id="ans" autocomplete="off"/>
 <script>
 window.addEventListener("load",()=>document.body.focus());
-const WORDS={json.dumps(words)},CYCLE={cycle_ms},START={start_ms},STEP={step_ms};
-let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
-function nextTrial(){{
- if(trial>=WORDS.length){{endExperiment();return;}}
- const w=WORDS[trial],mask="#".repeat(w.length);let showDur=START,hideDur=CYCLE-showDur;
- let tShow,tHide,const0=performance.now();let active=true;
- (function loop(){{if(!active)return;
-   scr.textContent=w;
-   tShow=setTimeout(()=>{{if(!active)return;
-     scr.textContent=mask;
-     tHide=setTimeout(()=>{{if(active){{showDur+=STEP;hideDur=Math.max(0,CYCLE-showDur);loop();}}}},hideDur);
-   }},showDur); }})();
- function onSpace(e){{if(e.code==="Space"&&active){{active=false;clearTimeout(tShow);clearTimeout(tHide);
-   const rt=Math.round(performance.now()-const0);window.removeEventListener("keydown",onSpace);
-   scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
-   ans.addEventListener("keydown",function onEnter(ev){{if(ev.key==="Enter"){{ev.preventDefault();
-     results.push({{word:w,rt_ms:rt,response:ans.value.trim()}});
-     ans.removeEventListener("keydown",onEnter);ans.style.display="none";trial++;nextTrial();}}}});
- }}}
- window.addEventListener("keydown",onSpace);}}
-function endExperiment(){{scr.style.fontSize="40px";scr.textContent="{end_message}";{download_js}}}
-nextTrial();</script></body></html>"""
+const WORDS = $WORDS;
+const CYCLE = $CYCLE;
+const START = $START;
+const STEP  = $STEP;
+
+let trial = 0;
+let results = [];
+const scr = document.getElementById("scr");
+const ans = document.getElementById("ans");
+
+function nextTrial(){
+  if(trial >= WORDS.length){ endExperiment(); return; }
+
+  const w = WORDS[trial];
+  const mask = "#".repeat(w.length);
+
+  let showDur = START;
+  let hideDur = CYCLE - showDur;
+  let tShow, tHide;
+  const t0 = performance.now();
+  let active = true;
+
+  (function loop(){
+    if(!active) return;
+    scr.textContent = w;
+    tShow = setTimeout(()=>{
+      if(!active) return;
+      scr.textContent = mask;
+      tHide = setTimeout(()=>{
+        if(active){
+          showDur += STEP;
+          hideDur = Math.max(0, CYCLE - showDur);
+          loop();
+        }
+      }, hideDur);
+    }, showDur);
+  })();
+
+  function onSpace(e){
+    if(e.code === "Space" && active){
+      active = false;
+      clearTimeout(tShow); clearTimeout(tHide);
+
+      const rt = Math.round(performance.now() - t0);
+      window.removeEventListener("keydown", onSpace);
+
+      scr.textContent = "";
+      ans.style.display = "block";
+      ans.value = "";
+      ans.focus();
+
+      ans.addEventListener("keydown", function onEnter(ev){
+        if(ev.key === "Enter"){
+          ev.preventDefault();
+          results.push({word:w, rt_ms:rt, response:ans.value.trim()});
+          ans.removeEventListener("keydown", onEnter);
+          ans.style.display = "none";
+          trial += 1;
+          nextTrial();
+        }
+      });
+    }
+  }
+  window.addEventListener("keydown", onSpace);
+}
+
+function endExperiment(){
+  scr.style.fontSize = "40px";
+  scr.textContent = $END_MESSAGE;
+  $DOWNLOAD_JS
+}
+
+nextTrial();
+</script>
+</body>
+</html>
+""")
+
+def experiment_html(words, with_download=True,
+                    cycle_ms=350, start_ms=14, step_ms=14):
+    # bloc JS pour téléchargement CSV
+    download_js = ""
+    if with_download:
+        download_js = r"""
+const csv = ["word;rt_ms;response",
+             ...results.map(r => `${r.word};${r.rt_ms};${r.response}`)].join("\n");
+const a = document.createElement("a");
+a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+a.download = "results.csv";
+a.textContent = "Télécharger les résultats";
+a.style.fontSize = "32px";
+a.style.marginTop = "30px";
+document.body.appendChild(a);"""
+    # pour éviter toute tentative de substitution $ dans le JS ci-dessus
+    download_js = download_js.replace("$", "$$")
+
+    html = HTML_TEMPLATE.substitute(
+        WORDS=json.dumps(words),
+        CYCLE=cycle_ms,
+        START=start_ms,
+        STEP=step_ms,
+        END_MESSAGE=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
+        DOWNLOAD_JS=download_js
+    )
+    return html
 
 # =============================================================================
 # 5. GESTION DE LA NAVIGATION
@@ -214,8 +289,8 @@ if "tirage_ok"      not in st.session_state: st.session_state.tirage_ok      = F
 
 # ─────────────────────────── PAGE INTRO ─────────────────────────────────────
 if st.session_state.page == "intro":
-    # 1) Affichage immédiat des consignes
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
+
     st.markdown(
         """
 **Principe**  
@@ -233,12 +308,12 @@ Le mot et le masque alterneront plusieurs fois lors de chaque essai.
         """
     )
 
-    # 2) Déclenche automatiquement le tirage (une seule fois)
+    # --------   déclenche AUTOMATIQUEMENT le tirage la première fois   -------
     if not st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
         st.session_state.tirage_en_cours = True
-        st.experimental_rerun()          # on relance immédiatement
+        st.experimental_rerun()
 
-    # 3) Tirage en cours : spinner + génération
+    # --------------------- TIRAGE EN COURS (spinner) -------------------------
     if st.session_state.tirage_en_cours and not st.session_state.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
             tirage_df = build_sheet()
@@ -249,7 +324,7 @@ Le mot et le masque alterneront plusieurs fois lors de chaque essai.
             st.session_state.tirage_ok  = True
         st.success("Tirage terminé !")
 
-    # 4) Une fois le tirage terminé, on active le bouton
+    # --------------------- BOUTON ACTIF QUAND TIRAGE OK ----------------------
     if st.session_state.tirage_ok:
         if st.button("Commencer la familiarisation"):
             st.session_state.page = "fam"
