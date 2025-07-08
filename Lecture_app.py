@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
-(familiarisation + test 80 mots, synchro rAF à 60 Hz)
+(familiarisation + test 80 mots – affichage du test 60 Hz facultatif)
 
 Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
@@ -22,7 +22,7 @@ def do_rerun():
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 
-# ═════════════════ config globale Streamlit ═══════════════════════════════
+# ═════════════════ configuration Streamlit ════════════════════════════════
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown(
     """
@@ -39,16 +39,16 @@ st.markdown(
 defaults = dict(
     page="screen_test",      # page courante
     hz_ok=False,             # test fréquence réussi ?
-    tirage_running=False,    # tirage en cours ?
+    tirage_running=False,    # tirage des mots en cours ?
     tirage_ok=False,         # tirage terminé ?
 )
 for k, v in defaults.items():
     st.session_state.setdefault(k, v)
 
-p = st.session_state          # alias plus court
+p = st.session_state          # alias
 
 
-# ═════════════════ paramètres/constantes tirage des mots ══════════════════
+# ═════════════════ constantes & paramètres tirage des mots ════════════════
 MEAN_FACTOR_OLDPLD = 0.45
 MEAN_DELTA = dict(letters=0.68, phons=0.68)
 SD_MULT = dict(letters=2, phons=2, old20=0.28, pld20=0.28, freq=1.9)
@@ -214,7 +214,7 @@ def build_sheet() -> pd.DataFrame:
     st.stop()
 
 
-# ═════════════════ HTML embarqué – test fréquence 60 Hz ═══════════════════
+# ═════════════════ HTML embarqué – test fréquence 60 Hz (facultatif) ══════
 TEST60_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -250,30 +250,30 @@ btn.addEventListener("click", mesure);
 """
 
 
-# ═════════════════════ navigation multi-pages ═════════════════════════════
-# 0. ── Test écran 60 Hz ───────────────────────────────────────────────────
+# ═════════════════ navigation multi-pages ═════════════════════════════════
+# 0. ── Page « screen_test » : test 60 Hz + bouton « Passer »
 if p.page == "screen_test":
-    st.subheader("Vérification de l’écran (60 Hz requis)")
+    st.subheader("Vérification (facultative) de la fréquence d’écran")
 
-    # Tant que le test n'est pas validé, on affiche l’iframe
-    if not p.hz_ok:
-        hz_val = components.html(TEST60_HTML, height=600, scrolling=False)
+    # l’iframe est toujours visible
+    hz_val = components.html(TEST60_HTML, height=600, scrolling=False)
 
-        # la valeur « ok » est renvoyée par la JS quand Hz ≈ 60
-        if hz_val == "ok":
-            p.hz_ok = True
-            do_rerun()
+    # si la JS renvoie « ok », on mémorise la réussite
+    if hz_val == "ok":
+        p.hz_ok = True
 
-        st.info("Cliquez sur « Démarrer », attendez le résultat puis recommencez.")
-
-    # Une fois validé, on affiche seulement le bouton « Passer »
+    # information visuelle (mais aucun blocage)
+    if p.hz_ok:
+        st.success("Fréquence ≈ 60 Hz détectée.")
     else:
-        st.success("Fréquence correcte !")
-        if st.button("Passer à la présentation ➜"):
-            p.page = "intro"
-            do_rerun()
+        st.info("Cliquez sur « Démarrer » pour lancer la mesure (facultatif).")
 
-# 1. ── Introduction + tirage des 80 mots ──────────────────────────────────
+    # bouton toujours actif
+    if st.button("Passer à la présentation ➜"):
+        p.page = "intro"
+        do_rerun()
+
+# 1. ── Introduction + tirage des mots ─────────────────────────────────────
 elif p.page == "intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown(
@@ -314,7 +314,7 @@ elif p.page == "fam":
         "Appuyez sur **ESPACE** dès que le mot apparaît, tapez-le puis validez par **Entrée**."
     )
 
-    # Iframe placeholder de la tâche (à remplacer par votre code JS)
+    # Iframe placeholder (à remplacer par votre vrai code JS)
     components.html(Template(open(__file__).read()).substitute(), height=650, scrolling=False)
 
     st.divider()
