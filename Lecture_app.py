@@ -40,9 +40,9 @@ st.markdown(
 # 1. PARAMÈTRES DU TIRAGE
 # =============================================================================
 MEAN_FACTOR_OLDPLD = 0.45
-MEAN_DELTA         = {"letters": 0.67, "phons": 0.67}
+MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
 SD_MULT             = {"letters": 2.0, "phons": 2.0,
-                       "old20": 0.27, "pld20": 0.27, "freq": 1.8}
+                       "old20": 0.28, "pld20": 0.28, "freq": 1.9}
 XLSX            = Path(__file__).with_name("Lexique.xlsx")
 N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
