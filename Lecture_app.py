@@ -12,7 +12,7 @@ from pathlib import Path
 from string import Template
 import pandas as pd
 import streamlit as st
-from streamlit import components
+import streamlit.components.v1 as components   # ← import correct
 
 # ────────────────────────── OUTIL RERUN ────────────────────────────────────
 def do_rerun():
@@ -23,21 +23,21 @@ st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
 #MainMenu, header, footer {visibility:hidden;}
-.css-1d391kg {display:none;}          /* ancien spinner                      */
+.css-1d391kg {display:none;}                      /* ancien spinner            */
 button:disabled{opacity:0.45 !important;cursor:not-allowed !important;}
 </style>""", unsafe_allow_html=True)
 
-# ----------------------------------------------------------------------------
-# 0.  ÉTATS SESSION
-# ----------------------------------------------------------------------------
+# =============================================================================
+# 0. ÉTATS PERSISTANTS
+# =============================================================================
 default_states = dict(page="screen_test", hz_ok=False,
                       tirage_ok=False, tirage_running=False)
 for k, v in default_states.items():
     st.session_state.setdefault(k, v)
 
-# ----------------------------------------------------------------------------
-# 1. PARAMÈTRES DU TIRAGE (inchangés)
-# ----------------------------------------------------------------------------
+# =============================================================================
+# 1. PARAMÈTRES DU TIRAGE
+# =============================================================================
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = {"letters": .68, "phons": .68}
 SD_MULT            = {"letters": 2, "phons": 2,
@@ -52,9 +52,9 @@ rng             = random.Random()
 NUM_BASE       = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS = ["PAIN", "EAU"]
 
-# ----------------------------------------------------------------------------
-# 2. OUTILS DIVERS
-# ----------------------------------------------------------------------------
+# =============================================================================
+# 2. OUTILS
+# =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s.astype(str)
                            .str.replace(" ",  "", regex=False)
@@ -65,12 +65,12 @@ def to_float(s: pd.Series) -> pd.Series:
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:  # -1 = LOW, +1 = HIGH
+def cat_code(tag: str) -> int:   # -1 = LOW ; +1 = HIGH
     return -1 if "LOW" in tag else 1
 
-# ----------------------------------------------------------------------------
-# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS  (identique aux versions précédentes)
-# ----------------------------------------------------------------------------
+# =============================================================================
+# 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
+# =============================================================================
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
@@ -102,9 +102,6 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
-# (les fonctions masks, sd_ok, mean_lp_ok, pick_five, build_sheet sont identiques
-#  → gardées telles quelles pour gagner de la place ici)
-# ----------------------------------------------------------------------------
 def masks(df, st_):
     return {"LOW_OLD":  df.old20 < st_["m_old20"] - st_["sd_old20"],
             "HIGH_OLD": df.old20 > st_["m_old20"] + st_["sd_old20"],
@@ -159,9 +156,9 @@ def build_sheet() -> pd.DataFrame:
             return df[order]
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
-# ----------------------------------------------------------------------------
-# 4A.  HTML  –  TEST FRÉQUENCE (plus de bouton « Continuer »)
-# ----------------------------------------------------------------------------
+# =============================================================================
+# 4A. HTML – TEST 60 Hz (sans bouton Continuer)
+# =============================================================================
 TEST60_HTML = r"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -175,11 +172,10 @@ button{font-size:24px;padding:8px 28px}
 </style>
 </head>
 <body>
-<h2>Test de fréquence d’écran<br/>(cible&nbsp;: 60 Hz)</h2>
-<p>Cliquez sur « Démarrer ».<br>Le programme mesure la fréquence de votre moniteur.</p>
+<h2>Test de fréquence d’écran<br/>(cible&nbsp;: 60&nbsp;Hz)</h2>
+<p>Cliquez sur «&nbsp;Démarrer&nbsp;».<br>Le programme mesure la fréquence de votre moniteur.</p>
 <div id="res">--</div>
 <button id="start">Démarrer</button>
-
 <script>
 const res=document.getElementById("res");
 document.getElementById("start").onclick=()=>{
@@ -189,7 +185,8 @@ document.getElementById("start").onclick=()=>{
     t.push(k); if(t.length<n){ requestAnimationFrame(step); }
     else{
       let d=[]; for(let i=2;i<t.length;i++) d.push(t[i]-t[i-1]);
-      const mean=d.reduce((a,b)=>a+b,0)/d.length, hz=1000/mean;
+      const mean=d.reduce((a,b)=>a+b,0)/d.length;
+      const hz  =1000/mean;
       res.textContent=`≈ ${hz.toFixed(1)} Hz`;
       const ok=hz>58&&hz<62;
       res.style.color=ok?"lime":"red";
@@ -204,9 +201,9 @@ document.getElementById("start").onclick=()=>{
 </html>
 """
 
-# ----------------------------------------------------------------------------
-# 4B.  HTML  –  EXPÉRIENCE  (rAF)
-# ----------------------------------------------------------------------------
+# =============================================================================
+# 4B. HTML – EXPÉRIENCE (requestAnimationFrame)
+# =============================================================================
 EXP_HTML = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -233,7 +230,10 @@ let results=[];
 const scr=document.getElementById("scr");
 const ans=document.getElementById("ans");
 
-function waitFrames(n,cb){let c=0;function step(){if(c++>=n)cb();else requestAnimationFrame(step);}requestAnimationFrame(step);}
+function waitFrames(n,cb){
+  let c=0; function step(){ if(c++>=n){ cb(); } else{ requestAnimationFrame(step);} }
+  requestAnimationFrame(step);
+}
 function present(){
   if(trial>=WORDS.length){ fin(); return; }
   const w=WORDS[trial], mask="#".repeat(w.length);
@@ -242,7 +242,7 @@ function present(){
   function cycle(){
     if(!active) return;
     scr.textContent=w;
-    waitFrames(showF,()=>{ if(!active) return;
+    waitFrames(showF,()=>{ if(!active)return;
       scr.textContent=mask;
       waitFrames(hideF,()=>{ if(active){
         showF+=STEP_F; hideF=Math.max(0,CYCLE_F-showF); cycle();
@@ -280,18 +280,18 @@ $STARTER
 </html>
 """)
 
-# ----------------------------------------------------------------------------
-# 4C.  FABRICATION DES PAGES HTML
-# ----------------------------------------------------------------------------
-def calibration_html():  # renvoie le code du test 60 Hz
+# =============================================================================
+# 4C. CONSTRUCTEURS HTML
+# =============================================================================
+def calibration_html() -> str:
     return TEST60_HTML
 
 def experiment_html(words, *, cycle_frames=21, start_frames=1, step_frames=1,
                     with_download=True, fullscreen=False):
     # téléchargement --------------------------------------------------------
-    download_js=""
+    download_js = ""
     if with_download:
-        download_js=r"""
+        download_js = r"""
 const csv=["word;rt_ms;response",
            ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
 const a=document.createElement("a");
@@ -301,10 +301,11 @@ a.textContent="Télécharger les résultats";
 a.style.fontSize="32px";
 a.style.marginTop="30px";
 document.body.appendChild(a);"""
-    download_js=download_js.replace("$","$$")
+    download_js = download_js.replace("$", "$$")
+
     # démarrage -------------------------------------------------------------
     if fullscreen:
-        starter_js=r"""
+        starter_js = r"""
 scr.textContent="Appuyez sur la barre ESPACE pour commencer";
 function first(e){ if(e.code==="Space"){
   window.removeEventListener("keydown",first);
@@ -312,13 +313,13 @@ function first(e){ if(e.code==="Space"){
 }}
 window.addEventListener("keydown",first);"""
     else:
-        starter_js="present();"
+        starter_js = "present();"
 
     return EXP_HTML.substitute(
         WORDS=json.dumps(words),
         CYCLE_F=cycle_frames,
         START_F=start_frames,
-        STEP_F =step_frames,
+        STEP_F=step_frames,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
         DOWNLOAD=download_js,
         STARTER=starter_js
@@ -328,17 +329,18 @@ window.addEventListener("keydown",first);"""
 # 5.  PAGES STREAMLIT
 # =============================================================================
 # ─────────── PAGE 0 : TEST 60 Hz ────────────────────────────────────────────
-if st.session_state.page=="screen_test":
+if st.session_state.page == "screen_test":
     st.write("### Vérification de l’écran (60 Hz requis)")
-    hz_value = components.html(calibration_html(), height=600, scrolling=False)
+    # le composant renvoie "ok" quand la fréquence est comprise entre 58 et 62 Hz
+    hz_value = components.html(calibration_html(), height=600, scrolling=False, key="calib")
     if hz_value == "ok":
         st.session_state.hz_ok = True
-    # Bouton vers l’introduction : activé seulement si le test est réussi
-    if st.button("Passer à la présentation ➜", disabled=not st.session_state.hz_ok):
-        st.session_state.page="intro"; do_rerun()
+    st.button("Passer à la présentation ➜",
+              disabled=not st.session_state.hz_ok,
+              on_click=lambda: (st.session_state.update(page="intro"), do_rerun()))
 
-# ─────────── PAGE 1 : INTRO + TIRAGE ───────────────────────────────────────-
-elif st.session_state.page=="intro":
+# ─────────── PAGE 1 : INTRO & TIRAGE ────────────────────────────────────────
+elif st.session_state.page == "intro":
     st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
     st.markdown("""
 Des mots seront brièvement présentés puis masqués (suite de “#”).
@@ -350,33 +352,33 @@ Des mots seront brièvement présentés puis masqués (suite de “#”).
 1. Entraînement (2 mots)  2. Test principal (80 mots)
 """)
     if not st.session_state.tirage_running and not st.session_state.tirage_ok:
-        st.session_state.tirage_running=True; do_rerun()
+        st.session_state.tirage_running = True; do_rerun()
     if st.session_state.tirage_running and not st.session_state.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
-            df=build_sheet()
-            mots=df["ortho"].tolist(); random.shuffle(mots)
-            st.session_state.stimuli=mots
-            st.session_state.tirage_ok=True
-            st.session_state.tirage_running=False
+            df = build_sheet()
+            mots = df["ortho"].tolist(); random.shuffle(mots)
+            st.session_state.stimuli = mots
+            st.session_state.tirage_ok = True
+            st.session_state.tirage_running = False
         st.success("Tirage terminé !")
     if st.session_state.tirage_ok:
-        if st.button("Commencer la familiarisation"):
-            st.session_state.page="fam"; do_rerun()
+        st.button("Commencer la familiarisation",
+                  on_click=lambda: (st.session_state.update(page="fam"), do_rerun()))
 
 # ─────────── PAGE 2 : FAMILIARISATION ──────────────────────────────────────
-elif st.session_state.page=="fam":
+elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
     st.markdown("Appuyez sur **ESPACE** dès que le mot apparaît, saisissez-le puis **Entrée**.")
     components.html(
         experiment_html(PRACTICE_WORDS, with_download=False),
-        height=650, scrolling=False)
+        height=650, scrolling=False, key="fam_html")
     st.divider()
-    if st.button("Passer au test principal"):
-        st.session_state.page="exp"; do_rerun()
+    st.button("Passer au test principal",
+              on_click=lambda: (st.session_state.update(page="exp"), do_rerun()))
 
 # ─────────── PAGE 3 : TEST PRINCIPAL ───────────────────────────────────────
-elif st.session_state.page=="exp":
+elif st.session_state.page == "exp":
     components.html(
         experiment_html(st.session_state.stimuli,
                         with_download=True, fullscreen=True),
-        height=700, scrolling=False)
+        height=700, scrolling=False, key="exp_html")
