@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3
+EXPÉRIENCE 3 – version « tirage pendant la page d’intro »
 • Familiarisation : 2 mots fixes (PAIN, EAU)
 • Test            : 4 × 20 mots (5 par feuille × 4 feuilles, tirage contraint)
 
-Fichier requis : Lexique.xlsx (Feuil1…Feuil4)
+Fichier requis : Lexique.xlsx (Feuil1 … Feuil4)
 Sortie         : results.csv  (séparateur “;”, décimale “.”)
 
 Exécution : streamlit run exp3.py
@@ -12,7 +12,7 @@ Exécution : streamlit run exp3.py
 from __future__ import annotations
 
 # ───────────────────────────── IMPORTS ────────────────────────────────────── #
-import json, random
+import json, random, threading
 from pathlib import Path
 
 import pandas as pd
@@ -25,7 +25,7 @@ st.markdown(
     """
     <style>
         #MainMenu, header, footer {visibility: hidden;}
-        .css-1d391kg {display: none;}  /* ancien spinner Streamlit */
+        .css-1d391kg {display: none;}        /* ancien spinner Streamlit */
     </style>
     """,
     unsafe_allow_html=True,
@@ -139,7 +139,7 @@ def mean_lp_ok(sub: pd.DataFrame, st_: dict) -> bool:
 
 def pick_five(tag: str, feuille: str, used: set[str], FEUILLES) -> pd.DataFrame | None:
     df   = FEUILLES[feuille]["df"]
-    st_  = FEUILLES[feuille]["stats"]
+    st_  = FEUILLES[feille]["stats"]
     fqs  = FEUILLES[feuille]["freq_cols"]
     pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
@@ -351,38 +351,61 @@ nextTrial();
 
 
 # =============================================================================
-# 5.  GÉNÉRATION DES STIMULI (test principal) – une fois par SESSION
-# =============================================================================
-if "tirage_df" not in st.session_state:
-    with st.spinner("Tirage aléatoire des 80 mots…"):
-        st.session_state.tirage_df = build_sheet()
-        mots = st.session_state.tirage_df["ortho"].tolist()
-        random.shuffle(mots)
-        st.session_state.stimuli = mots
-
-tirage_df = st.session_state.tirage_df
-STIMULI   = st.session_state.stimuli
-
-# =============================================================================
-# 6.  GESTION DE LA NAVIGATION
+# 5.  GESTION DE LA NAVIGATION
 # =============================================================================
 if "page" not in st.session_state:
     st.session_state.page = "intro"
 
-# ─────────────────────── PAGE INTRO ───────────────────────────────────────── #
+# ──────────────────────────── PAGE INTRO ──────────────────────────────────── #
 if st.session_state.page == "intro":
-    st.title("EXPERIENCE 3 – mots masqués")
-    st.markdown("Cette expérience comporte d’abord **une courte familiarisation** "
-                "puis le test principal.")
-    if st.button("Commencer la familiarisation"):
-        st.session_state.page = "fam"
-        st.rerun()
+    st.title("TÂCHE DE RECONNAISSANCE DE MOTS")
+    st.markdown(
+        """
+**Dans cette expérience, des mots vont vous être présentés brièvement à l’écran, suivis immédiatement d’un masque visuel.**  
+Le mot et le masque alterneront plusieurs fois au cours de chaque essai.
+
+Votre tâche :  
+• Fixez votre regard au centre de l’écran.  
+• Dès que vous reconnaissez un mot, appuyez immédiatement sur la barre **Espace** avec l’index de votre main dominante.  
+• Tapez ensuite le mot que vous pensez avoir vu, attention aux accents et aux pluriels.  
+• Vérifiez que vous avez bien écrit ce mot, puis appuyez sur **Entrée** pour passer au mot suivant.
+
+Avant de commencer :  
+Vous effectuerez un court entraînement pour vous familiariser à la tâche. Ensuite, vous verrez **80 mots** présentés dans un ordre aléatoire.
+        """
+    )
+
+    # ---------------------------------------------------------------
+    # Tirage AU MOMENT de la lecture de la page d’intro
+    # ---------------------------------------------------------------
+    if "tirage_df" not in st.session_state:
+        # La petite roue reste visible pendant le tirage
+        with st.spinner("Tirage aléatoire des 80 mots… veuillez patienter"):
+            tirage_df = build_sheet()
+            mots = tirage_df["ortho"].tolist()
+            random.shuffle(mots)
+
+            st.session_state.tirage_df = tirage_df
+            st.session_state.stimuli   = mots
+
+        st.success("Tirage terminé !")
+        st.write("")  # petite marge
+
+    # ----------------------------------------------------------------
+    # Le bouton n’est affiché que lorsque le tirage est terminé
+    # ----------------------------------------------------------------
+    if "tirage_df" in st.session_state:
+        if st.button("Commencer la familiarisation"):
+            st.session_state.page = "fam"
+            st.rerun()
 
 # ──────────────────── PAGE FAMILIARISATION ───────────────────────────────── #
 elif st.session_state.page == "fam":
     st.header("Familiarisation (2 mots)")
-    st.markdown("Appuyez sur **Espace** dès que vous voyez apparaître le mot, "
-                "puis tapez ce que vous avez lu et validez avec **Entrée**.")
+    st.markdown(
+        "Appuyez sur **Espace** dès que vous voyez apparaître le mot, "
+        "puis tapez ce que vous avez lu et validez avec **Entrée**."
+    )
     components.v1.html(
         experiment_html(PRACTICE_WORDS, with_download=False),
         height=650, scrolling=False
@@ -396,8 +419,8 @@ elif st.session_state.page == "fam":
 else:
     st.header("Test principal (80 mots)")
     with st.expander("Statistiques du tirage (aperçu)"):
-        st.dataframe(tirage_df.head())
+        st.dataframe(st.session_state.tirage_df.head())
     components.v1.html(
-        experiment_html(STIMULI, with_download=True),
+        experiment_html(st.session_state.stimuli, with_download=True),
         height=650, scrolling=False
     )
