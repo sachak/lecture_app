@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-EXPERIENCE  –  Reconnaissance de mots
-Navigation : 100 % plein-écran  (écran 60 Hz)
-Pilotage : clic unique au départ, puis touche Espace
+Test de reconnaissance de mots (60 Hz)
+Navigation : plein-écran permanent – contrôle par ESPACE
 """
 from __future__ import annotations
 import json, random
@@ -13,21 +12,20 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# ─────────────────────────── CONFIG ──────────────────────────────────────
+# ───────────── PARAMÉTRAGE STREAMLIT ────────────────────────────────────
 st.set_page_config(page_title="Reconnaissance de mots", layout="wide")
 st.markdown("<style>#MainMenu,header,footer{visibility:hidden}</style>",
             unsafe_allow_html=True)
 
-rerun = lambda: (st.rerun if hasattr(st, "rerun")
-                 else st.experimental_rerun)()
+rerun = lambda: (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
-# ──────────────────────── ÉTAT SESSION ───────────────────────────────────
+# ───────────── ÉTAT SESSION ─────────────────────────────────────────────
 ss = st.session_state
-ss.setdefault("page",       "intro")     # intro → instr → fam → pretest → test
-ss.setdefault("tirage_ok",  False)
+ss.setdefault("page", "intro")        # intro → instr → fam → pretest → test
+ss.setdefault("tirage_ok", False)
 ss.setdefault("stimuli",    [])
 
-# ──────────────────── FONCTION TIRAGE 80 MOTS ────────────────────────────
+# ───────────── TIRAGE DES 80 MOTS (exemple simple) ─────────────────────
 def tirer_80() -> list[str]:
     xlsx = Path(__file__).with_name("Lexique.xlsx")
     mots = (pd.read_excel(xlsx)
@@ -35,64 +33,61 @@ def tirer_80() -> list[str]:
     random.shuffle(mots)
     return mots[:80]
 
-# ───────────────────── SCRIPT « ESPACE = CLIC » ──────────────────────────
+# ───────────── SCRIPT : « ESPACE = clic sur 1ᵉ bouton » ────────────────
 auto_space = """<script>
-document.addEventListener('keydown',e=>{
-  if(e.code==='Space'){
-      const b=parent.document.querySelector('button');
-      if(b){e.preventDefault();b.click();}
-  }});
+document.addEventListener('keydown', e=>{
+   if(e.code==='Space'){
+       const b=parent.document.querySelector('button');
+       if(b){ e.preventDefault(); b.click(); }
+   }});
 </script>"""
 
-# ─────────────────────── TEMPLATE HTML PHASES ────────────────────────────
+# ───────────── TEMPLATE HTML (phases fam & test) ───────────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
 html,body{margin:0;height:100%;display:flex;align-items:center;justify-content:center;
 background:#000;color:#fff;font-family:'Courier New',monospace;font-size:60px}
-</style></head><body tabindex="0"><div id="scr">+</div>
+</style></head>
+<body tabindex="0"><div id="scr">+</div>
 <script>
 const WORDS = $WORDS;
-let idx = 0, scr = document.getElementById('scr');
+let i=0; const scr=document.getElementById('scr');
 function next(){
-  if(idx >= WORDS.length){ parent.postMessage('$END','*'); return;}
-  scr.textContent = '+'; setTimeout(()=>scr.textContent = WORDS[idx++],500);
+  if(i>=WORDS.length){ parent.postMessage('$FLAG','*'); return;}
+  scr.textContent='+'; setTimeout(()=>scr.textContent=WORDS[i++],500);
 }
-next();
+next();                       // premier mot
 addEventListener('keydown',e=>e.code==='Space'&&next());
 </script></body></html>""")
 
-def phase_html(liste, end_flag):
-    return HTML_TPL.substitute(WORDS=json.dumps(liste), END=end_flag)
+def phase_html(liste, flag):     # flag = "FAM_DONE" ou "FIN"
+    return HTML_TPL.substitute(WORDS=json.dumps(liste), FLAG=flag)
 
-# ────────────────────────── PAGE 1  (clic) ───────────────────────────────
+# ─────────────────── PAGE 1  : clic  → plein-écran ──────────────────────
 if ss.page == "intro":
     st.title("Bienvenue au test de reconnaissance de mots")
     st.write("""
 Écran **60 Hz** recommandé.  
-Cliquez sur le bouton pour passer en <b>plein-écran</b>.  
-(ESC ou F11 quitteront le plein-écran si nécessaire.)""",
+Cliquez pour passer en <b>plein-écran</b> (ESC ou F11 pour quitter).""",
              unsafe_allow_html=True)
 
     if st.button("▶  Activer le plein-écran et continuer"):
-        # déclenche le plein-écran
-        components.html(
-            "<script>parent.document.documentElement.requestFullscreen()\
-                   .catch(()=>{});</script>",
-            height=0, width=0)
+        components.v1.html(
+            "<script>parent.document.documentElement.requestFullscreen()"
+            ".catch(()=>{});</script>", height=0, width=0)
         ss.page = "instr"
         rerun()
 
-# ────────────────────────── PAGE 2  (Espace) ─────────────────────────────
+# ─────────────────── PAGE 2  : instructions (ESPACE) ───────────────────
 elif ss.page == "instr":
     st.header("Instructions")
     st.markdown("""
 1. Fixez la croix « + ».  
-2. Dès que vous reconnaissez le mot, <b>appuyez sur Espace</b>.  
-3. Tapez le mot lu et validez.  
+2. Dès que vous lisez le mot, <b>appuyez sur Espace</b>.  
+3. Retapez le mot, validez.  
 
-Quand vous êtes prêt·e :  
-<b>appuyez sur Espace</b> ou cliquez sur le bouton.""",
+<b>Appuyez sur Espace</b> (ou cliquez) pour démarrer la familiarisation.""",
                 unsafe_allow_html=True)
     st.markdown(auto_space, unsafe_allow_html=True)
 
@@ -101,50 +96,50 @@ Quand vous êtes prêt·e :
         ss.tirage_ok = True
 
     if st.button("▶  Démarrer la familiarisation"):
-        ss.page = "fam"
-        rerun()
+        ss.page = "fam"; rerun()
 
-# ────────────────────────── PAGE 3  (familiarisation) ────────────────────
+# ─────────────────── PAGE 3  : familiarisation (iframe) ────────────────
 elif ss.page == "fam":
-    components.html(
+    components.v1.html(
         phase_html(["PAIN","EAU"], "FAM_DONE"),
         height=650, scrolling=False)
 
-    # Réception du message « FAM_DONE »
-    components.html("""
+    # réception du message « FAM_DONE »
+    components.v1.html("""
 <script>
-addEventListener('message',e=>{
+addEventListener('message', e=>{
    if(e.data==='FAM_DONE'){
-      parent.location.search='step=fam';
-   }});</script>""", height=0, width=0)
+        parent.location.search='flag=fam'; }
+});
+</script>""", height=0, width=0)
 
-    if st.query_params.get("step") == "fam":
+    if st.query_params.get("flag") == "fam":
         st.query_params.clear()
-        ss.page = "pretest"
-        rerun()
+        ss.page = "pretest"; rerun()
 
-# ────────────────────────── PAGE 4  (transition) ─────────────────────────
+# ─────────────────── PAGE 4  : transition (ESPACE) ─────────────────────
 elif ss.page == "pretest":
     st.header("Familiarisation terminée")
     st.write("Appuyez sur **Espace** pour commencer le test principal "
-             "ou cliquez.")
+             "(clic possible).")
     st.markdown(auto_space, unsafe_allow_html=True)
 
     if st.button("▶  Commencer le test principal"):
-        ss.page = "test"
-        rerun()
+        ss.page = "test"; rerun()
 
-# ────────────────────────── PAGE 5  (test) ───────────────────────────────
+# ─────────────────── PAGE 5  : test principal (iframe) ──────────────────
 elif ss.page == "test":
-    components.html(
-        phase_html(ss.stimuli, "FIN"), height=650, scrolling=False)
+    components.v1.html(
+        phase_html(ss.stimuli, "FIN"),
+        height=650, scrolling=False)
 
-    components.html("""
+    components.v1.html("""
 <script>
-addEventListener('message',e=>{
-   if(e.data==='FIN'){ parent.location.search='step=fin'; }});</script>""",
-        height=0, width=0)
+addEventListener('message', e=>{
+   if(e.data==='FIN'){ parent.location.search='flag=fin'; }
+});
+</script>""", height=0, width=0)
 
-    if st.query_params.get("step") == "fin":
+    if st.query_params.get("flag") == "fin":
         st.query_params.clear()
         st.header("Merci ! Le test est terminé.")
