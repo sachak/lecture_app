@@ -47,7 +47,7 @@ PRACTICE_WORDS    = ["PAIN", "EAU"]
 CYCLE_MS          = 350      # mot + masque
 CROSS_MS          = 500      # croix 500 ms
 
-MEAN_FACTOR_OLDPLD = .33
+MEAN_FACTOR_OLDPLD = .30
 MEAN_DELTA         = dict(letters=.60, phons=.60)
 SD_MULT            = dict(letters=2, phons=2, old20=.26, pld20=.26, freq=1.9)
 
