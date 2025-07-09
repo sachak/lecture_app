@@ -6,8 +6,8 @@ EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
 • Choix 60 Hz / 120 Hz / autre
 • Croix de fixation 500 ms avant chaque mot
 • Présentation pilotée par requestAnimationFrame
+• ENTièrement responsive : TV, PC, tablette, smartphone (centré & typo auto-scalée)
 """
-
 from __future__ import annotations
 import inspect, json, random
 from pathlib import Path
@@ -18,10 +18,8 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-
-# ──────────────────── outil rerun (Streamlit < 1.26 & ≥ 1.26) ────────────
+# ────────────────────────── outil rerun ──────────────────────────────────
 def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
-
 
 # ────────────────────────── configuration UI ─────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -62,7 +60,7 @@ def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in ta
 
 def nearest_hz(x:float)->int: return min([60,75,90,120,144], key=lambda v:abs(v-x))
 
-# ────── 1. lecture de Lexique.xlsx (identique) ───────────────────────────
+# ────── 1. lecture de Lexique.xlsx ───────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
@@ -158,20 +156,57 @@ def build_sheet() -> pd.DataFrame:
             return df[["ortho"]+NUM_BASE+ALL+["source","group","old_cat","pld_cat"]]
     st.error("Impossible de générer la liste."); st.stop()
 
-# ────── 3. gabarit HTML (fixation + rAF) ─────────────────────────────────
+# ────── 3. gabarit HTML responsive (fixation + rAF) ──────────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0"/>
 <style>
-html,body{height:100%;margin:0;background:#000;color:#fff;
+/* ------------- Mise en page FULL responsive --------------------------- */
+html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
           display:flex;flex-direction:column;align-items:center;justify-content:center;
-          font-family:'Courier New',monospace}
-#scr{font-size:60px;color:#fff;user-select:none}
-#ans{display:none;font-size:48px;width:60%;text-align:center;
-     background:#fff;color:#000;border:none;padding:4px}
+          font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation}
+#container{width:100vw;height:100vh;display:flex;flex-direction:column;
+           align-items:center;justify-content:center}
+#scr{
+  font-size:7vw;            /* taille de base en vw (viewport-width)          */
+  line-height:1.15;
+  color:#fff;text-align:center;user-select:none;text-shadow:0 2px 6px #222;
+  max-width:90vw;word-break:break-word
+}
+#ans{
+  display:none;font-size:5vw;min-font-size:22px;width:70vw;max-width:92vw;
+  text-align:center;background:#fff;color:#000;border:none;padding:1.1vw 0.6vw;
+  margin-top:2vh;border-radius:0.5vw;box-shadow:0 2px 8px #3335;outline:none
+}
+/* ------- réajustements pour petits écrans ----------------------------- */
+@media (max-width:700px){
+  #scr{font-size:14vw}
+  #ans{font-size:8vw;min-font-size:16px}
+}
+@media (max-width:470px){
+  #scr{font-size:18vw}
+  #ans{font-size:11vw;min-font-size:12px}
+}
+/* ------- pour grandes dalles / TV 4K ---------------------------------- */
+@media (min-width:1600px) and (min-height:900px){
+  #scr{font-size:4vw}
+  #ans{font-size:2.5vw;min-font-size:28px}
+}
+::placeholder{color:#bbb}
 </style></head><body tabindex="0">
-<div id="scr"></div><input id="ans" autocomplete="off"/>
+<div id="container"><div id="scr"></div><input id="ans" autocomplete="off"/></div>
 <script>
-window.addEventListener("load",()=>document.body.focus());
+/* ---------- Fonctions de redimensionnement précis -------------------- */
+function resizeAll(){
+  let w=innerWidth, h=innerHeight, base=Math.min(w,h);
+  let scr=document.getElementById('scr'), ans=document.getElementById('ans');
+  scr.style.fontSize=Math.max(Math.round(base*0.08),26)+"px";
+  ans.style.fontSize=Math.max(Math.round(base*0.054),20)+"px";
+  ans.style.width=Math.min(w*0.70,650)+"px";
+}
+addEventListener('resize',resizeAll);
+addEventListener('orientationchange',resizeAll);
+addEventListener('load',()=>{document.body.focus();setTimeout(resizeAll,80);});
 /* ---------------- paramètres insérés depuis Python ------------------- */
 const WORDS   = $WORDS;
 const START_F = $STARTF;           // 1 f @60 Hz ; 2 f @120 Hz
@@ -183,10 +218,8 @@ let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElemen
 /* --------------------------------------------------------------------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
-
   const w=WORDS[trial], mask="#".repeat(w.length);
   let active=true;
-
   /* -------- 1. CROIX DE FIXATION ------------------------------------ */
   let frame=0;
   scr.textContent="+";
@@ -196,18 +229,16 @@ function nextTrial(){
     else{ requestAnimationFrame(crossLoop); }
   }
   requestAnimationFrame(crossLoop);
-
   /* -------- 2. MOT + MASQUE ----------------------------------------- */
   function startStimulus(){
     let showF=START_F, phase="show", f2=0;
     const t0=performance.now();
-
     function stimLoop(){
       if(!active)return;
       if(phase==="show"){
         if(f2===0) scr.textContent=w;
         if(++f2>=showF){ phase="mask"; f2=0; scr.textContent=mask; }
-      }else{                           // phase masque
+      }else{
         const hideF=Math.max(0,CYCLE_F-showF);
         if(++f2>=hideF){
           showF=Math.min(showF+STEP_F,CYCLE_F);
@@ -217,13 +248,12 @@ function nextTrial(){
       requestAnimationFrame(stimLoop);
     }
     requestAnimationFrame(stimLoop);
-
     /* ------ Gestion de la réponse ----------------------------------- */
     function onSpace(e){
       if(e.code==="Space"&&active){
-        active=false; window.removeEventListener("keydown",onSpace);
+        active=false; removeEventListener("keydown",onSpace);
         const rt=Math.round(performance.now()-t0);
-        scr.textContent=""; ans.style.display="block"; ans.value=""; ans.focus();
+        scr.textContent=""; ans.style.display="block"; ans.value=""; ans.focus();resizeAll();
         ans.addEventListener("keydown",function onEnter(ev){
           if(ev.key==="Enter"){ ev.preventDefault();
             results.push({word:w,rt_ms:rt,response:ans.value.trim()});
@@ -233,52 +263,22 @@ function nextTrial(){
         });
       }
     }
-    window.addEventListener("keydown",onSpace);
+    addEventListener("keydown",onSpace);
   }
 }
 /* ----------- fin d'expérience ---------------------------------------- */
-function fin(){scr.style.fontSize="40px";scr.textContent=$END_MSG;$DOWNLOAD}
+function fin(){
+  scr.style.fontSize="min(6vw,48px)";
+  scr.textContent=$END_MSG;$DOWNLOAD
+  resizeAll();
+}
 $STARTER
 </script></body></html>""")
 
-def experiment_html(words: List[str], hz: int,
-                    with_download=True, fullscreen=False) -> str:
-    frame  = 1000 / hz
-    cycle_f= int(round(CYCLE_MS  / frame))      # 21 f @60 Hz ; 42 f @120 Hz
-    cross_f= int(round(CROSS_MS / frame))       # 30 f @60 Hz ; 60 f @120 Hz
-    scale  = hz // 60                           # 1 pour 60 Hz ; 2 pour 120 Hz
-    start_f= 1 * scale
-    step_f = 1 * scale
-
-    dl_js=""
-    if with_download:
-        dl_js=r"""
-const csv=["word;rt_ms;response",
-           ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
-const a=document.createElement("a");
-a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-a.download="results.csv";
-a.textContent="Télécharger les résultats";
-a.style.fontSize="32px";a.style.marginTop="30px";
-document.body.appendChild(a);""".replace("$","$$")
-
-    starter="nextTrial();"
-    if fullscreen:
-        starter=r"""
-scr.textContent="Appuyez sur la barre ESPACE pour commencer";
-function first(e){if(e.code==="Space"){window.removeEventListener("keydown",first);
-document.documentElement.requestFullscreen?.();nextTrial();}}
-window.addEventListener("keydown",first);"""
-
-    return HTML_TPL.substitute(
-        WORDS=json.dumps(list(words)),
-        STARTF=start_f, STEPF=step_f, CYCLEF=cycle_f, CROSSF=cross_f,
-        END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=dl_js, STARTER=starter)
-
-# ────── 4. composant test fréquence écran ────────────────────────────────
+# ────── 4. composant test fréquence écran (inchangé) ─────────────────────
 TEST_HTML=r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=0"/>
 <style>html,body{height:100%;margin:0;background:#000;color:#fff;
 display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 #res{font-size:48px;margin:24px}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
