@@ -60,7 +60,35 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 
 def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 
-def nearest_hz(x:float)->int: return min([60,75,90,120,144], key=lambda v:abs(v-x))
+def nearest_hz(x: float) -> int:
+    """
+    Arrondit la valeur mesurée `x` (Hz) en fonction des intervalles souhaités.
+
+      28–32   → 30 Hz
+      58–62   → 60 Hz
+      73–78   → 75 Hz
+      88–92   → 90 Hz
+      83–97   → 85 Hz
+      98–102  → 100 Hz
+      118–122 → 120 Hz
+      142–146 → 144 Hz
+
+    Si la valeur ne correspond à aucun intervalle, on renvoie l'arrondi le plus proche.
+    """
+    ranges = [
+        (28,  32,  30),
+        (58,  62,  60),
+        (73,  78,  75),
+        (88,  92,  90),  # doit précéder 83–97 pour éviter le chevauchement
+        (83,  97,  85),
+        (98, 102, 100),
+        (118, 122, 120),
+        (142, 146, 144),
+    ]
+    for lo, hi, val in ranges:
+        if lo <= x <= hi:
+            return val
+    return round(x)
 
 # ────── 1. lecture de Lexique.xlsx (identique) ───────────────────────────
 @st.cache_data(show_spinner=False)
