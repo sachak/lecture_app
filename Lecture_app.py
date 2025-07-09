@@ -39,7 +39,7 @@ for k, v in dict(page="screen_test",
 p = st.session_state
 
 
-# ───────────────── constantes & fonctions « tirage » (inchangées) ────────
+# ───────────────── constantes & fonctions « tirage » ─────────────────────
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -149,7 +149,7 @@ def pick_five(tag, feuille, used, F):
         if tag == "LOW_OLD" and samp.old20.mean() >= \
            st_["m_old20"] - MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
         if tag == "HIGH_OLD" and samp.old20.mean() <= \
-           st_{"m_old20"] + MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
+           st_["m_old20"] + MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
         if tag == "LOW_PLD" and samp.pld20.mean() >= \
            st_["m_pld20"] - MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:  continue
         if tag == "HIGH_PLD" and samp.pld20.mean() <= \
@@ -170,7 +170,7 @@ def build_sheet() -> pd.DataFrame:
     all_freq = F["all_freq_cols"]
 
     for _ in range(MAX_TRY_FULL):
-        taken  = {sh:set() for sh in F if sh != "all_freq_cols"}
+        taken  = {sh: set() for sh in F if sh != "all_freq_cols"}
         groups = []; ok = True
 
         for tag in TAGS:
@@ -268,16 +268,15 @@ if p.page == "screen_test":
 
     st.divider()
 
-    # ─────────── NOUVEAUTÉ : deux boutons « Suivant » ───────────
+    # ────────────── deux boutons « Suivant » ──────────────
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Suivant 60 Hz ➜", key="next60"):
-            # (facultatif) mémoriser la sélection
-            p.manual_choice_hz = 60
+            p.manual_choice_hz = 60     # (optionnel)
             go("intro")
     with col2:
         if st.button("Suivant 120 Hz ➜", key="next120"):
-            p.manual_choice_hz = 120
+            p.manual_choice_hz = 120    # (optionnel)
             go("intro")
 
 
