@@ -6,7 +6,7 @@ EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
 • Croix de fixation 500 ms
 • Affichage responsive (TV, PC, tablette, smartphone)
 • Mobile : tap + clavier virtuel QWERTZ sans suggestions
-• Le tap n’est actif que durant la phase de test principal
+• Le tap est actif durant la familiarisation et le test principal
 """
 from __future__ import annotations
 import inspect, json, random
@@ -226,6 +226,7 @@ function buildVK(){
     "QWERTZUIOP",
     "ASDFGHJKL",
     "YXCVBNM",
+    "ÀÂÄÇÉÈÊËÎÏÔÖÙÜ",
     "ÇÉÈÊÏÔ←↵"
   ];
   rows.forEach(r=>{
@@ -440,7 +441,7 @@ elif p.page == "fam":
     components.html(
         experiment_html(PRACTICE_WORDS, p.hz_sel,
                         with_download=False, fullscreen=False,
-                        touch_trigger=False),   # tap inactif
+                        touch_trigger=True),   # tap actif pendant la familiarisation
         height=650, scrolling=False
     )
     st.divider()
@@ -458,7 +459,7 @@ elif p.page == "exp":
         components.html(
             experiment_html(p.stimuli, p.hz_sel,
                             with_download=True, fullscreen=True,
-                            touch_trigger=True),   # tap actif
+                            touch_trigger=True),
             height=700, scrolling=False
         )
 
