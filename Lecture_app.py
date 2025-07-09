@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
-• 60 Hz / 120 Hz (frame-accurate, rAF)
-• Croix de fixation 500 ms
-• Responsive (TV, PC, mobile, tablette)
-• Mobile : clavier virtuel sans prédiction
-• Le TAP déclenche la réponse seulement durant la phase « Test »
+• 60 / 120 Hz (frame-accurate)
+• Croix fixation 500 ms
+• Responsive (TV, PC, mobile)
+• Mobile : clavier virtuel QWERTZ sans prédiction
+• TAP actif seulement pendant la phase de test
 """
 from __future__ import annotations
 import inspect, json, random
@@ -22,7 +22,6 @@ import streamlit.components.v1 as components
 # ───────────────────────── utilitaire rerun ─────────────────────────────
 def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
-
 # ───────────────────────── configuration UI ─────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
@@ -30,7 +29,6 @@ st.markdown("""
 #MainMenu, header, footer{visibility:hidden;}
 button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 </style>""", unsafe_allow_html=True)
-
 
 # ─────────────────────────── constantes ─────────────────────────────────
 XLSX               = Path(__file__).with_name("Lexique.xlsx")
@@ -49,7 +47,6 @@ MEAN_FACTOR_OLDPLD = .35
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
 
-
 # ────────────────────────── petits outils ───────────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
@@ -64,7 +61,7 @@ def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in ta
 
 def nearest_hz(x: float) -> int: return min([60, 75, 90, 120, 144], key=lambda v: abs(v - x))
 
-# ────── 1. lecture de Lexique.xlsx ──────────────────────────────────────
+# ────── 1. lecture du classeur Excel ────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
@@ -192,54 +189,59 @@ html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
   <div id="vk"></div>
 </div>
 <script>
-function _id(x){return document.getElementById(x);}
+function _$(x){return document.getElementById(x);}
 function resizeAll(){
   let w=innerWidth,h=innerHeight,base=Math.min(w,h);
-  let scr=_id('scr'),ans=_id('ans');
-  scr.style.fontSize=Math.max(Math.round(base*0.08),26)+'px';
-  ans.style.fontSize=Math.max(Math.round(base*0.054),20)+'px';
-  ans.style.width=Math.min(w*0.7,650)+'px';
+  _$('scr').style.fontSize=Math.max(Math.round(base*0.08),26)+'px';
+  _$('ans').style.fontSize=Math.max(Math.round(base*0.054),20)+'px';
+  _$('ans').style.width=Math.min(w*0.7,650)+'px';
 }
 addEventListener('resize',resizeAll);
 addEventListener('orientationchange',resizeAll);
 addEventListener('load',()=>{document.body.focus();setTimeout(resizeAll,80);});
 
-/* ------------ paramètres injectés depuis Python ---------------------- */
+/* ------- paramètres injectés depuis Python --------------------------- */
 const WORDS=$WORDS;
 const START_F=$STARTF,STEP_F=$STEPF,CYCLE_F=$CYCLEF,CROSS_F=$CROSSF;
 const TOUCH_TRIGGER=$ENABLE_TOUCH;
 /* --------------------------------------------------------------------- */
 const IS_TOUCH=('ontouchstart'in window)||(navigator.maxTouchPoints>0);
-let trial=0,results=[],scr=_id('scr'),ans=_id('ans'),vk=_id('vk');
+let trial=0,results=[],scr=_$('scr'),ans=_$('ans'),vk=_$('vk');
 let finishAnswer=()=>{};
 
-/* ---------- clavier virtuel (mobile) --------------------------------- */
+/* ---------- construction clavier virtuel (QWERTZ + accents) ---------- */
 function buildVK(){
   if(vk.firstChild)return;
-  const rows=["AZERTYUIOP","QSDFGHJKLM","WXCVBN","←OK"];
-  for(const r of rows){
+  const rows=[
+    "QWERTZUIOP",
+    "ASDFGHJKL",
+    "YXCVBNM",
+    "ÀÂÄÇÉÈÊËÎÏÔÖÙÜ",
+    "←↵"
+  ];
+  rows.forEach(r=>{
     const div=document.createElement('div');div.className='krow';
-    for(const ch of r){
+    [...r].forEach(ch=>{
       const b=document.createElement('button');b.className='key';b.textContent=ch;
       div.appendChild(b);
-    }
+    });
     vk.appendChild(div);
-  }
+  });
   vk.addEventListener('pointerdown',e=>{
     const t=e.target;if(!t.classList.contains('key'))return;
     e.preventDefault();
     const k=t.textContent;
     if(k==="←"){ans.value=ans.value.slice(0,-1);}
-    else if(k==="OK"){finishAnswer();}
+    else if(k==="↵"){finishAnswer();}
     else{ans.value+=k;}
   },{passive:false});
 }
 
-/* ---------- déroulement d'un essai ----------------------------------- */
+/* ---------------- déroulement d'un essai ----------------------------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
   const w=WORDS[trial],mask="#".repeat(w.length);let active=true;
-  let frame=0;scr.textContent="+";
+  scr.textContent="+";let frame=0;
   const crossLoop=()=>{if(!active)return;
     if(++frame>=CROSS_F)startStimulus();else requestAnimationFrame(crossLoop);}
   requestAnimationFrame(crossLoop);
@@ -260,7 +262,7 @@ function nextTrial(){
     }
     requestAnimationFrame(stimLoop);
 
-    /* ------ déclencheur (Espace / Tap) -------------------------------- */
+    /* ---------- déclencheur réponse (espace / tap) ------------------ */
     function onTrigger(e){
       if(e instanceof KeyboardEvent && e.code!=="Space")return;
       if(e instanceof PointerEvent){e.preventDefault();}
@@ -274,26 +276,33 @@ function nextTrial(){
     if(TOUCH_TRIGGER) addEventListener('pointerdown',onTrigger,{passive:false});
   }
 
-  /* ------------- saisie réponse -------------------------------------- */
+  /* ------------------ saisie de la réponse -------------------------- */
   function promptAnswer(rt){
     scr.textContent="";
     ans.value="";ans.style.display="block";
     if(IS_TOUCH){
       ans.readOnly=true;buildVK();vk.style.display="flex";
-    }else{ans.readOnly=false;ans.focus();}
+    }else{
+      ans.readOnly=false;
+      setTimeout(()=>ans.focus(),50);
+    }
     resizeAll();
 
+    /* ----------- validation ---------------------------------------- */
+    function keyEnter(ev){
+      if(ev.key==="Enter"){ev.preventDefault();finishAnswer();}
+    }
+    addEventListener('keydown',keyEnter);
+
     finishAnswer=function(){
-      results.push({word:w,rt_ms:rt,response:ans.value.trim()});
+      removeEventListener('keydown',keyEnter);
       ans.style.display="none";vk.style.display="none";
+      results.push({word:w,rt_ms:rt,response:ans.value.trim()});
       trial++;nextTrial();
     };
-    ans.addEventListener('keydown',function onEnter(ev){
-      if(ev.key==="Enter"){ev.preventDefault();finishAnswer();}
-    },{once:true});
   }
 }
-/* ---------------- fin d'expérience ----------------------------------- */
+/* -------------------- fin d’expérience ------------------------------- */
 function fin(){
   scr.style.fontSize="min(6vw,48px)";
   scr.textContent=$END_MSG;$DOWNLOAD;
@@ -346,7 +355,8 @@ addEventListener("pointerdown",first,{passive:false});"""
         STARTF=start_f, STEPF=step_f,
         CYCLEF=cycle_f, CROSSF=cross_f,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=dl_js, STARTER=starter,
+        DOWNLOAD=dl_js,
+        STARTER=starter,
         ENABLE_TOUCH=("true" if touch_trigger else "false")
     )
 
@@ -407,7 +417,7 @@ Chaque essai : croix 500 ms → mot bref → masque (`#####`).
 
 • Fixez le centre de l’écran  
 • Dès que vous reconnaissez le mot, **touchez l’écran OU appuyez sur ESPACE**  
-• Tapez ensuite le mot (clavier virtuel sur mobile) et validez avec **OK** / **Entrée**
+• Tapez ensuite le mot (clavier virtuel sur mobile) et validez avec **↵ / Entrée**
 
 Déroulement : 2 essais d’entraînement + 80 essais de test
 """)
@@ -428,7 +438,7 @@ elif p.page=="fam":
     components.html(
         experiment_html(PRACTICE_WORDS, p.hz_sel,
                         with_download=False, fullscreen=False,
-                        touch_trigger=False),          # ⬅ Pas de TAP durant familiarisation
+                        touch_trigger=False),          # TAP inactif ici
         height=650, scrolling=False
     )
     st.divider()
@@ -438,7 +448,7 @@ elif p.page=="fam":
 elif p.page=="exp":
     if not p.exp_started:
         st.header("Test principal : 80 mots")
-        with st.expander("Aperçu (5 lignes)") :
+        with st.expander("Aperçu (5 lignes)"):
             st.dataframe(p.tirage_df.head())
         if st.button("Commencer le test (plein écran)"):
             p.exp_started=True; do_rerun()
@@ -446,7 +456,7 @@ elif p.page=="exp":
         components.html(
             experiment_html(p.stimuli, p.hz_sel,
                             with_download=True, fullscreen=True,
-                            touch_trigger=True),       # ⬅ TAP actif ici
+                            touch_trigger=True),        # TAP actif
             height=700, scrolling=False
         )
 else:
