@@ -7,37 +7,34 @@ Exécution :  streamlit run exp3_responsive.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
-
 from pathlib import Path
-import inspect
-import random
+import inspect, random
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-# ────────────────────────── OUTIL « re-run » ──────────────────────────────
+# ────────────────────────── utilitaire « re-run » ─────────────────────────
 def _rerun():  (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
-# ───────────────────────── CONFIG GÉNÉRALE ───────────────────────────────
+# ───────────────────── configuration générale (plein-écran) ──────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
-html,body,.stApp            {height:100%; margin:0; overflow:hidden;}
-main.block-container         {padding:0;}           /* retire la marge Streamlit */
-#MainMenu,header,footer      {visibility:hidden;}   /* masque menu & footer      */
-button:disabled              {opacity:.45!important; cursor:not-allowed!important;}
+html,body,.stApp          {height:100%; margin:0; overflow:hidden;}
+main.block-container       {padding:0;}                 /* supprime marge centre */
+#MainMenu,header,footer    {visibility:hidden;}         /* cache menu & footer  */
+button:disabled            {opacity:.45!important; cursor:not-allowed!important;}
 </style>
 """, unsafe_allow_html=True)
 
-# ────────────────────────── SESSION STATE ────────────────────────────────
-defaults = dict(page="screen_test", hz_val=None,
-                tirage_running=False, tirage_ok=False)
-for k, v in defaults.items():
+# ────────────────────────── état de session ──────────────────────────────
+for k, v in dict(page="screen_test", hz_val=None,
+                 tirage_running=False, tirage_ok=False).items():
     st.session_state.setdefault(k, v)
 p = st.session_state
-def go(page:str):  p.page = page; _rerun()
+def go(pg:str):  p.page = pg; _rerun()
 
-# ───────────────────────── CONSTANTES & OUTILS TIRAGE ────────────────────
+# ────────────────── constantes & fonctions de tirage (inchangées) ────────
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -52,13 +49,12 @@ NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
-         .str.replace(r"[  ,]", "", regex=True)
+         .str.replace(r"[  ,]", "", regex=True)     # espaces insécables etc.
          .str.replace(",", ".", regex=False),
         errors="coerce")
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
-    return df.sample(frac=1,
-                     random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
+    return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
 def cat_code(tag:str) -> int:  return -1 if "LOW" in tag else 1
 
@@ -80,6 +76,7 @@ def load_sheets() -> dict[str, dict]:
 
         fq = [c for c in df.columns if c.startswith("freq")]
         all_freq_cols.update(fq)
+
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + fq
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {sh}"); st.stop()
@@ -88,7 +85,7 @@ def load_sheets() -> dict[str, dict]:
             df[c] = to_float(df[c])
 
         df["ortho"] = df["ortho"].astype(str).str.upper()
-        df = df.dropna(subset=need).reset_index(drop=True)
+        df          = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean() for c in
                  ("old20", "pld20", "nblettres", "nbphons")}
@@ -125,17 +122,19 @@ def mean_lp_ok(s, st_) -> bool:
 def pick_five(tag, feuille, used, F):
     df, st_ = F[feuille]["df"], F[feuille]["stats"]
     fq      = F[feuille]["freq_cols"]
-    pool    = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
+
+    pool = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG:
         return None
 
     for _ in range(MAX_TRY_TAG):
         samp = pool.sample(N_PER_FEUIL_TAG,
                            random_state=rng.randint(0, 1_000_000)).copy()
-        if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
-        if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
-        if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:  continue
-        if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:  continue
+
+        if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
+        if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
+        if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
+        if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
         if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fq):
             continue
 
@@ -170,14 +169,13 @@ def build_sheet() -> pd.DataFrame:
 
     st.error("Impossible de générer la liste."); st.stop()
 
-# ────────────────────────── OUTIL HTML plein-écran ───────────────────────
-def full_html(body:str, key:str|None=None, height:int=200):
+# ────────────────────────── composant HTML plein-écran ───────────────────
+def full_html(body:str, *, key:str|None=None, height:int=200):
     """
-    Injecte un composant HTML qui occupe 100 % de la hauteur de la fenêtre
-    et s’y ré-ajuste automatiquement (aucun scroll interne).
-    Renvoie la valeur éventuellement transmise par Streamlit.setComponentValue().
+    Place un composant HTML occupant 100 % de la fenêtre.
+    Ajoute key uniquement si la version de Streamlit l'accepte.
     """
-    wrapper = f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+    html_doc = f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
     <style>html,body{{height:100%;margin:0;overflow:hidden;}}</style></head>
     <body>{body}
     <script>
@@ -186,16 +184,19 @@ def full_html(body:str, key:str|None=None, height:int=200):
       window.addEventListener("resize",resize);
       Streamlit.setComponentReady();
     </script></body></html>"""
-    return components.html(wrapper, height=height, scrolling=False, key=key)
 
-# ────────────────────────── TEST FRÉQUENCE (HTML) ────────────────────────
+    kwargs = dict(height=height, scrolling=False)
+    if key and "key" in inspect.signature(components.html).parameters:
+        kwargs["key"] = key
+    return components.html(html_doc, **kwargs)
+
+# ────────────────────────── test fréquence (HTML) ────────────────────────
 TEST_HTML_BODY = r"""
 <h2 style="font-size:6vw;margin:0 0 2vh">Test de fréquence</h2>
 <div id="res" style="font-size:8vw;margin:4vh 0">--</div>
 <button id="go"  style="font-size:4vw;padding:1vh 4vw" onclick="mesure()">Démarrer</button>
 <button id="next" style="display:none;font-size:4vw;padding:1vh 4vw;margin-top:2vh"
         onclick="next()">Suivant ➜</button>
-
 <script>
 let hzVal=null;
 function mesure(){
@@ -219,12 +220,11 @@ function mesure(){
 function next(){ Streamlit.setComponentValue('NEXT'); }
 </script>"""
 
-# ────────────────────────── OUTIL : fréquences « commerce » ───────────────
 COMMERCIAL = [60, 75, 90, 120, 144]
-def nearest_hz(x: float) -> int:  return min(COMMERCIAL, key=lambda v: abs(v-x))
+def nearest_hz(x: float) -> int: return min(COMMERCIAL, key=lambda v:abs(v-x))
 
-# ───────────────────────────────── PAGES ──────────────────────────────────
-# 0. — Test fréquence écran
+# ─────────────────────────────── PAGES ───────────────────────────────────
+# 0 — Test fréquence
 if p.page == "screen_test":
 
     st.markdown("## 1. Vérification (facultative) de la fréquence d’écran",
@@ -232,10 +232,9 @@ if p.page == "screen_test":
 
     val = full_html(TEST_HTML_BODY, key="hz_test")
 
-    # analyse de la valeur renvoyée par le composant
     if isinstance(val, str) and val == "NEXT":
         if p.hz_val is None or nearest_hz(p.hz_val) != 60:
-            st.error("Fréquence non compatible : vous ne pouvez pas poursuivre.")
+            st.error("Fréquence non compatible : impossible de poursuivre.")
         else:
             go("intro")
 
@@ -243,22 +242,21 @@ if p.page == "screen_test":
         try:  p.hz_val = float(val)
         except ValueError:  pass
 
-# 1. — Présentation + tirage
+# 1 — Présentation + tirage
 elif p.page == "intro":
 
     st.markdown("""
 <div style='height:100%;display:flex;flex-direction:column;
             align-items:center;justify-content:center;text-align:center'>
-    <h2>2. Présentation de la tâche</h2>
-    <p style='max-width:600px;font-size:1.4rem'>
-    Des mots seront affichés très brièvement puis masqués (<code>#####</code>).<br>
-    • Fixez le centre de l’écran.<br>
-    • Dès que vous reconnaissez un mot, appuyez sur <b>ESPACE</b>.<br>
-    • Tapez ensuite le mot puis <b>Entrée</b>.<br><br>
-    Étapes : 1)&nbsp;Entraînement (2 mots) 2)&nbsp;Test principal (80 mots)
-    </p>
-</div>
-""", unsafe_allow_html=True)
+  <h2>2. Présentation de la tâche</h2>
+  <p style='max-width:600px;font-size:1.4rem'>
+  Des mots seront affichés très brièvement puis masqués (<code>#####</code>).<br>
+  • Fixez le centre de l’écran.<br>
+  • Dès que vous reconnaissez un mot, appuyez sur <b>ESPACE</b>.<br>
+  • Tapez ensuite le mot puis <b>Entrée</b>.<br><br>
+  Étapes : 1)&nbsp;Entraînement (2 mots) 2)&nbsp;Test principal (80 mots)
+  </p>
+</div>""", unsafe_allow_html=True)
 
     if not p.tirage_running and not p.tirage_ok:
         p.tirage_running = True; _rerun()
@@ -275,7 +273,7 @@ elif p.page == "intro":
                                  use_container_width=True):
         go("fam")
 
-# 2. — Familiarisation
+# 2 — Familiarisation
 elif p.page == "fam":
     st.markdown("<h2 style='text-align:center'>Familiarisation (2 mots)</h2>",
                 unsafe_allow_html=True)
@@ -284,23 +282,23 @@ elif p.page == "fam":
                 "<b>Entrée</b>.</p>", unsafe_allow_html=True)
 
     full_html("""
-        <div style='background:#000;color:#fff;height:100%;
-                    display:flex;align-items:center;justify-content:center;
-                    font-size:3rem'>
-            — Votre tâche de familiarisation ici —
-        </div>""", key="fam_task")
+      <div style='background:#000;color:#fff;height:100%;
+                  display:flex;align-items:center;justify-content:center;
+                  font-size:3rem'>
+         — Votre tâche de familiarisation ici —
+      </div>""", key="fam")
 
     if st.button("Passer au test principal", use_container_width=True):
         go("exp")
 
-# 3. — Test principal
+# 3 — Test principal
 elif p.page == "exp":
     st.markdown("<h2 style='text-align:center'>Test principal (80 mots)</h2>",
                 unsafe_allow_html=True)
 
     full_html("""
-        <div style='background:#000;color:#fff;height:100%;
-                    display:flex;align-items:center;justify-content:center;
-                    font-size:3rem'>
-            — Votre tâche principale ici —
-        </div>""", key="exp_task")
+      <div style='background:#000;color:#fff;height:100%;
+                  display:flex;align-items:center;justify-content:center;
+                  font-size:3rem'>
+         — Votre tâche principale ici —
+      </div>""", key="exp")
