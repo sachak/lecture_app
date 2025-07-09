@@ -268,15 +268,19 @@ if p.page == "screen_test":
 
     st.divider()
 
-    # ────────────── deux boutons « Suivant » ──────────────
-    col1, col2 = st.columns(2)
+    # ───────────── trois boutons « Suivant » ─────────────
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Suivant 60 Hz ➜", key="next60"):
-            p.manual_choice_hz = 60     # (optionnel)
+            p.manual_choice_hz = 60
             go("intro")
     with col2:
         if st.button("Suivant 120 Hz ➜", key="next120"):
-            p.manual_choice_hz = 120    # (optionnel)
+            p.manual_choice_hz = 120
+            go("intro")
+    with col3:
+        if st.button("Suivant Autre Hz ➜", key="nextOther"):
+            p.manual_choice_hz = "other"
             go("intro")
 
 
