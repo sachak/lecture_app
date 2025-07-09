@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués (version frame-accurate)
-• Choix manuel de la fréquence 60 Hz / 120 Hz
-• rAF pour la présentation (1 frame @60 Hz = 2 frames @120 Hz)
+• Test de fréquence d’écran
+• Choix 60 Hz / 120 Hz / autre
+• requestAnimationFrame pour la présentation
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ rng                = random.Random()
 
 NUM_BASE           = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS     = ["PAIN", "EAU"]
-CYCLE_MS           = 350                     # durée totale mot+masque (≃21 frames @60 Hz)
+CYCLE_MS           = 350                     # mot+masque (≈21 frames @60 Hz)
 
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
@@ -57,7 +58,9 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 
 def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 
-# ────── 1. lecture de Lexique.xlsx (identique à la version d’origine) ────
+def nearest_hz(x:float)->int: return min([60,75,90,120,144], key=lambda v:abs(v-x))
+
+# ────── 1. lecture de Lexique.xlsx (identique) ───────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
@@ -93,7 +96,7 @@ def load_sheets() -> Dict[str, Dict]:
     feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
 
-# ────── 2. algorithme de tirage (inchangé) ───────────────────────────────
+# ────── 2. tirage des 80 mots (algorithme inchangé) ──────────────────────
 def masks(df, st_): return dict(
     LOW_OLD = df.old20 < st_["m_old20"],
     HIGH_OLD= df.old20 > st_["m_old20"],
@@ -169,9 +172,9 @@ html,body{height:100%;margin:0;background:#000;color:#fff;
 window.addEventListener("load",()=>document.body.focus());
 /* -------- paramètres passés par Python -------------------------------- */
 const WORDS   = $WORDS;
-const START_F = $STARTF;           // 1 frame (60 Hz) / 2 frames (120 Hz)
+const START_F = $STARTF;           // 1 f @60Hz ; 2 f @120Hz
 const STEP_F  = $STEPF;
-const CYCLE_F = $CYCLEF;           // ≈350 ms => 21 f (60 Hz) / 42 f (120 Hz)
+const CYCLE_F = $CYCLEF;           // ≈21 f @60Hz ; 42 f @120Hz
 /* ---------------------------------------------------------------------- */
 let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
 function nextTrial(){if(trial>=WORDS.length){fin();return;}
@@ -206,16 +209,15 @@ $STARTER
 def experiment_html(words: List[str], hz: int,
                     with_download=True, fullscreen=False) -> str:
     """Construit le HTML avec minutage en images."""
-    frame = 1000 / hz
-    cycle_f = int(round(CYCLE_MS / frame))          # 21 f @60 Hz, 42 f @120 Hz
-    # 1 image au départ ; si 120 Hz --> ×2 pour garder 16,7 ms
-    scale   = hz // 60
-    start_f = 1 * scale
-    step_f  = 1 * scale
+    frame  = 1000 / hz
+    cycle_f= int(round(CYCLE_MS / frame))         # 21 f @60Hz ; 42 f @120Hz
+    scale  = hz // 60                             # 1 pour 60 ; 2 pour 120
+    start_f= 1 * scale
+    step_f = 1 * scale
 
-    dl=""
+    download_js=""
     if with_download:
-        dl=r"""
+        download_js=r"""
 const csv=["word;rt_ms;response",
            ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
 const a=document.createElement("a");
@@ -237,28 +239,62 @@ window.addEventListener("keydown",first);"""
         WORDS=json.dumps(list(words)),
         STARTF=start_f, STEPF=step_f, CYCLEF=cycle_f,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=dl, STARTER=starter)
+        DOWNLOAD=download_js, STARTER=starter)
 
-# ────── 4. état session ─────────────────────────────────────────────────
-for k,v in {"page":"choose_hz","tirage_ok":False,"tirage_run":False,
+# ────── 4. composant de test fréquence écran ─────────────────────────────
+TEST_HTML=r"""
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<style>html,body{height:100%;margin:0;background:#000;color:#fff;
+display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#res{font-size:48px;margin:24px}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
+<h2>Test de fréquence</h2><div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
+<script>
+function mesure(){const r=document.getElementById('res'),b=document.getElementById('go');
+b.disabled=true;r.textContent='Mesure…';let f=0,t0=performance.now();
+function loop(){f++;if(f<120){requestAnimationFrame(loop);}else{
+const hz=f*1000/(performance.now()-t0);r.textContent='≈ '+hz.toFixed(1)+' Hz';
+Streamlit.setComponentValue(hz.toFixed(1));b.disabled=false;}}requestAnimationFrame(loop);}
+Streamlit.setComponentReady();
+</script></body></html>"""
+
+# ────── 5. état session ─────────────────────────────────────────────────
+for k,v in {"page":"screen_test","tirage_ok":False,"tirage_run":False,
             "stimuli":[], "tirage_df":pd.DataFrame(),"exp_started":False,
-            "hz_sel":None}.items():
+            "hz_val":None,"hz_sel":None}.items():
     st.session_state.setdefault(k,v)
 p=st.session_state
 
 def go(page:str): p.page=page; do_rerun()
 
-# ────── 5. PAGES ────────────────────────────────────────────────────────
-# choix fréquence
-if p.page=="choose_hz":
-    st.subheader("1. Choisissez la fréquence de votre écran")
-    c1,c2=st.columns(2)
+# ────── 6. PAGES ────────────────────────────────────────────────────────
+# 0. test écran
+if p.page=="screen_test":
+    st.subheader("1. Vérification (facultative) de la fréquence d’écran")
+    kw=dict(height=520,scrolling=False)
+    if "key" in inspect.signature(components.html).parameters: kw["key"]="hz"
+    val=components.html(TEST_HTML, **kw)
+    if isinstance(val,(int,float,str)):
+        try: p.hz_val=float(val)
+        except ValueError: pass
+    if p.hz_val is not None:
+        st.write(f"Fréquence détectée ≈ **{nearest_hz(p.hz_val):d} Hz**")
+    st.divider()
+    c1,c2,c3=st.columns(3)
     with c1:
-        if st.button("Écran 60 Hz ➜"): p.hz_sel=60; go("intro")
+        if st.button("Suivant 60 Hz ➜"):
+            p.hz_sel=60; go("intro")
     with c2:
-        if st.button("Écran 120 Hz ➜"): p.hz_sel=120; go("intro")
+        if st.button("Suivant 120 Hz ➜"):
+            p.hz_sel=120; go("intro")
+    with c3:
+        if st.button("Suivant autre Hz ➜"):
+            go("incompatible")
 
-# intro + tirage
+# 1-bis écran incompatible
+elif p.page=="incompatible":
+    st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
+
+# 2. introduction + tirage
 elif p.page=="intro":
     st.subheader("2. Présentation de la tâche")
     st.markdown(f"""
@@ -283,7 +319,7 @@ Déroulement : 2 essais d’entraînement puis 80 essais de test.
     if p.tirage_ok and st.button("Commencer la familiarisation"):
         go("fam")
 
-# familiarisation
+# 3. familiarisation
 elif p.page=="fam":
     st.header("Familiarisation (2 mots)")
     st.write("Appuyez sur **ESPACE** dès qu’un mot apparaît, tapez-le puis **Entrée**.")
@@ -294,7 +330,7 @@ elif p.page=="fam":
     if st.button("Passer au test principal"):
         p.page="exp"; p.exp_started=False; do_rerun()
 
-# test principal
+# 4. test principal
 elif p.page=="exp":
     if not p.exp_started:
         st.header("Test principal : 80 mots")
@@ -306,3 +342,6 @@ elif p.page=="exp":
         components.html(
             experiment_html(p.stimuli, p.hz_sel, with_download=True, fullscreen=True),
             height=700, scrolling=False)
+
+else:
+    st.stop()
