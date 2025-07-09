@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
-• 60 Hz / 120 Hz (requestAnimationFrame)
+• 60 Hz / 120 Hz (frame-accurate, rAF)
 • Croix de fixation 500 ms
-• Responsive (TV, PC, tablette, smartphone)
-• Sur mobile : tap pour répondre + CLAVIER VIRTUEL (pas de prédiction)
+• Responsive (TV, PC, mobile, tablette)
+• Mobile : clavier virtuel sans prédiction
+• Le TAP déclenche la réponse seulement durant la phase « Test »
 """
 from __future__ import annotations
 import inspect, json, random
@@ -17,8 +18,10 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+
 # ───────────────────────── utilitaire rerun ─────────────────────────────
 def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
+
 
 # ───────────────────────── configuration UI ─────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -27,6 +30,7 @@ st.markdown("""
 #MainMenu, header, footer{visibility:hidden;}
 button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 </style>""", unsafe_allow_html=True)
+
 
 # ─────────────────────────── constantes ─────────────────────────────────
 XLSX               = Path(__file__).with_name("Lexique.xlsx")
@@ -38,14 +42,15 @@ rng                = random.Random()
 NUM_BASE           = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS     = ["PAIN", "EAU"]
 
-CYCLE_MS           = 350    # mot+masque
+CYCLE_MS           = 350    # mot + masque
 CROSS_MS           = 500    # croix fixation
 
 MEAN_FACTOR_OLDPLD = .35
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
 
-# ────────────────────────── petits outils ──────────────────────────────
+
+# ────────────────────────── petits outils ───────────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str).str.replace(r"[ ,\xa0]", "", regex=True).str.replace(",", "."),
@@ -93,6 +98,7 @@ def load_sheets() -> Dict[str, Dict]:
     feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
 
+
 # ────── 2. tirage aléatoire des 80 mots ─────────────────────────────────
 def masks(df, st_): return dict(
     LOW_OLD=df.old20 < st_["m_old20"],
@@ -121,7 +127,6 @@ def pick_five(tag, feuille, used, F):
     fq      = F[feuille]["freq_cols"]
     pool    = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
     if len(pool) < N_PER_FEUIL_TAG: return None
-
     for _ in range(MAX_TRY_TAG):
         samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0, 1_000_000)).copy()
         if tag=="LOW_OLD"  and samp.old20.mean()>=st_["m_old20"]-MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
@@ -136,8 +141,8 @@ def pick_five(tag, feuille, used, F):
     return None
 
 def build_sheet() -> pd.DataFrame:
-    F = load_sheets()
-    ALL = F["all_freq_cols"]
+    F  = load_sheets()
+    ALL= F["all_freq_cols"]
     for _ in range(MAX_TRY_FULL):
         take={sh:set() for sh in F if sh!="all_freq_cols"}; groups=[]; ok=True
         for tag in TAGS:
@@ -171,7 +176,7 @@ html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
 .krow{display:flex;justify-content:center;margin:.2vh 0}
 .key{user-select:none;border:none;margin:0 .8vw;border-radius:.8vw;
      background:#333;color:#fff;font-weight:600;
-     font-size:6vw;min-width:8vw;padding: .6vh 0}
+     font-size:6vw;min-width:8vw;padding:.6vh 0}
 .key:active{background:#555}
 @media (min-width:500px){.key{font-size:28px}}
 @media (max-width:700px){#scr{font-size:14vw}#ans{font-size:8vw;min-font-size:16px}}
@@ -187,38 +192,39 @@ html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
   <div id="vk"></div>
 </div>
 <script>
-/* ------------- outils responsive ---------------- */
+function _id(x){return document.getElementById(x);}
 function resizeAll(){
   let w=innerWidth,h=innerHeight,base=Math.min(w,h);
-  let scr=$id('scr'),ans=$id('ans');
+  let scr=_id('scr'),ans=_id('ans');
   scr.style.fontSize=Math.max(Math.round(base*0.08),26)+'px';
   ans.style.fontSize=Math.max(Math.round(base*0.054),20)+'px';
   ans.style.width=Math.min(w*0.7,650)+'px';
 }
-function $id(x){return document.getElementById(x);}
-addEventListener('resize',resizeAll);addEventListener('orientationchange',resizeAll);
+addEventListener('resize',resizeAll);
+addEventListener('orientationchange',resizeAll);
 addEventListener('load',()=>{document.body.focus();setTimeout(resizeAll,80);});
 
-/* ------------- paramètres Python ---------------- */
+/* ------------ paramètres injectés depuis Python ---------------------- */
 const WORDS=$WORDS;
 const START_F=$STARTF,STEP_F=$STEPF,CYCLE_F=$CYCLEF,CROSS_F=$CROSSF;
-/* ------------------------------------------------ */
-const TOUCH=('ontouchstart'in window)||(navigator.maxTouchPoints>0);
-let trial=0,results=[],scr=$id('scr'),ans=$id('ans'),vk=$id('vk');
+const TOUCH_TRIGGER=$ENABLE_TOUCH;
+/* --------------------------------------------------------------------- */
+const IS_TOUCH=('ontouchstart'in window)||(navigator.maxTouchPoints>0);
+let trial=0,results=[],scr=_id('scr'),ans=_id('ans'),vk=_id('vk');
 let finishAnswer=()=>{};
 
-/* ---------- construction clavier virtuel -------- */
+/* ---------- clavier virtuel (mobile) --------------------------------- */
 function buildVK(){
   if(vk.firstChild)return;
   const rows=["AZERTYUIOP","QSDFGHJKLM","WXCVBN","←OK"];
-  rows.forEach(r=>{
+  for(const r of rows){
     const div=document.createElement('div');div.className='krow';
-    [...r].forEach(ch=>{
+    for(const ch of r){
       const b=document.createElement('button');b.className='key';b.textContent=ch;
       div.appendChild(b);
-    });
+    }
     vk.appendChild(div);
-  });
+  }
   vk.addEventListener('pointerdown',e=>{
     const t=e.target;if(!t.classList.contains('key'))return;
     e.preventDefault();
@@ -229,17 +235,15 @@ function buildVK(){
   },{passive:false});
 }
 
-/* ---------- déroulement d'un essai ------------- */
+/* ---------- déroulement d'un essai ----------------------------------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
   const w=WORDS[trial],mask="#".repeat(w.length);let active=true;
-  /* croix fixation */
   let frame=0;scr.textContent="+";
   const crossLoop=()=>{if(!active)return;
     if(++frame>=CROSS_F)startStimulus();else requestAnimationFrame(crossLoop);}
   requestAnimationFrame(crossLoop);
 
-  /* mot + masque */
   function startStimulus(){
     let showF=START_F,phase="show",f2=0;
     const t0=performance.now();
@@ -256,28 +260,27 @@ function nextTrial(){
     }
     requestAnimationFrame(stimLoop);
 
-    /* ------ déclencheur barre espace OU tap ---- */
+    /* ------ déclencheur (Espace / Tap) -------------------------------- */
     function onTrigger(e){
       if(e instanceof KeyboardEvent && e.code!=="Space")return;
-      if(e instanceof PointerEvent)e.preventDefault();
+      if(e instanceof PointerEvent){e.preventDefault();}
       if(!active)return;
-      active=false;removeEventListener('keydown',onTrigger);
-      removeEventListener('pointerdown',onTrigger);
+      active=false;
+      removeEventListener('keydown',onTrigger);
+      if(TOUCH_TRIGGER) removeEventListener('pointerdown',onTrigger);
       promptAnswer(Math.round(performance.now()-t0));
     }
     addEventListener('keydown',onTrigger);
-    addEventListener('pointerdown',onTrigger,{passive:false});
+    if(TOUCH_TRIGGER) addEventListener('pointerdown',onTrigger,{passive:false});
   }
 
-  /* ------------- saisie réponse --------------- */
+  /* ------------- saisie réponse -------------------------------------- */
   function promptAnswer(rt){
     scr.textContent="";
     ans.value="";ans.style.display="block";
-    if(TOUCH){
+    if(IS_TOUCH){
       ans.readOnly=true;buildVK();vk.style.display="flex";
-    }else{
-      ans.readOnly=false;ans.focus();
-    }
+    }else{ans.readOnly=false;ans.focus();}
     resizeAll();
 
     finishAnswer=function(){
@@ -285,13 +288,12 @@ function nextTrial(){
       ans.style.display="none";vk.style.display="none";
       trial++;nextTrial();
     };
-
     ans.addEventListener('keydown',function onEnter(ev){
       if(ev.key==="Enter"){ev.preventDefault();finishAnswer();}
     },{once:true});
   }
 }
-/* ---------------- fin d'expérience ----------- */
+/* ---------------- fin d'expérience ----------------------------------- */
 function fin(){
   scr.style.fontSize="min(6vw,48px)";
   scr.textContent=$END_MSG;$DOWNLOAD;
@@ -300,9 +302,10 @@ function fin(){
 $STARTER
 </script></body></html>""")
 
-# ────── 3-bis. fonction de construction ---------------------------------
+# ────── 3-bis. constructeur de la page expérience ------------------------
 def experiment_html(words: List[str], hz: int,
-                    with_download=True, fullscreen=False) -> str:
+                    with_download=True, fullscreen=False,
+                    touch_trigger=True) -> str:
     frame   = 1000 / hz
     cycle_f = int(round(CYCLE_MS / frame))
     cross_f = int(round(CROSS_MS / frame))
@@ -343,7 +346,8 @@ addEventListener("pointerdown",first,{passive:false});"""
         STARTF=start_f, STEPF=step_f,
         CYCLEF=cycle_f, CROSSF=cross_f,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=dl_js, STARTER=starter
+        DOWNLOAD=dl_js, STARTER=starter,
+        ENABLE_TOUCH=("true" if touch_trigger else "false")
     )
 
 # ────── 4. composant test fréquence (rAF) ───────────────────────────────
@@ -389,7 +393,7 @@ if p.page=="screen_test":
     with c2:
         if st.button("Suivant 120 Hz ➜"): p.hz_sel=120; go("intro")
     with c3:
-        if st.button("Suivant autre ➜"):  go("incompatible")
+        if st.button("Autre ➜"):          go("incompatible")
 
 elif p.page=="incompatible":
     st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
@@ -399,11 +403,11 @@ elif p.page=="intro":
     st.markdown(f"""
 Écran sélectionné : **{p.hz_sel} Hz**
 
-Chaque essai : croix 500 ms → mot très bref → masque (`#####`).
+Chaque essai : croix 500 ms → mot bref → masque (`#####`).
 
 • Fixez le centre de l’écran  
 • Dès que vous reconnaissez le mot, **touchez l’écran OU appuyez sur ESPACE**  
-• Tapez ensuite le mot (clavier virtuel sur mobile) puis **OK** / **Entrée**  
+• Tapez ensuite le mot (clavier virtuel sur mobile) et validez avec **OK** / **Entrée**
 
 Déroulement : 2 essais d’entraînement + 80 essais de test
 """)
@@ -423,7 +427,8 @@ elif p.page=="fam":
     st.write("Croix 500 ms → mot → masque. Touchez l’écran ou appuyez sur ESPACE dès que possible.")
     components.html(
         experiment_html(PRACTICE_WORDS, p.hz_sel,
-                        with_download=False, fullscreen=False),
+                        with_download=False, fullscreen=False,
+                        touch_trigger=False),          # ⬅ Pas de TAP durant familiarisation
         height=650, scrolling=False
     )
     st.divider()
@@ -433,14 +438,15 @@ elif p.page=="fam":
 elif p.page=="exp":
     if not p.exp_started:
         st.header("Test principal : 80 mots")
-        with st.expander("Aperçu (5 lignes) du tirage"):
+        with st.expander("Aperçu (5 lignes)") :
             st.dataframe(p.tirage_df.head())
         if st.button("Commencer le test (plein écran)"):
             p.exp_started=True; do_rerun()
     else:
         components.html(
             experiment_html(p.stimuli, p.hz_sel,
-                            with_download=True, fullscreen=True),
+                            with_download=True, fullscreen=True,
+                            touch_trigger=True),       # ⬅ TAP actif ici
             height=700, scrolling=False
         )
 else:
