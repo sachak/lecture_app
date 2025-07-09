@@ -6,61 +6,60 @@ Exécution :  streamlit run exp3.py
 Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
+
 import inspect, json, random, re
 from pathlib import Path
 from string import Template
 from typing import Dict, List
+
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
 
-#────────────────────────── utilitaire « rerun » ────────────────────────────
+# ────────────────────── outil « rerun » universel ───────────────────────────
 def do_rerun():
-    st.session_state["_rerun_flag_"] = True
+    st.session_state["_rerun_flag"] = True
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 
-#────────────────────────── config Streamlit ────────────────────────────────
+# ──────────────────────── configuration Streamlit ───────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
 st.markdown("""
 <style>
-#MainMenu, header, footer{visibility:hidden;}
+#MainMenu, header, footer {visibility:hidden;}
 button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 </style>
 """, unsafe_allow_html=True)
 
 
-#────────────────────────── constantes globales ─────────────────────────────
+# ─────────────────────────── constantes globales ────────────────────────────
 MEAN_FACTOR_OLDPLD = .45
-MEAN_DELTA         = {"letters": .68, "phons": .68}
-SD_MULT            = {"letters": 2, "phons": 2,
-                      "old20": .28, "pld20": .28, "freq": 1.9}
+MEAN_DELTA = {"letters": .68, "phons": .68}
+SD_MULT    = {"letters": 2, "phons": 2,
+              "old20": .28, "pld20": .28, "freq": 1.9}
 
-XLSX            = Path(__file__).with_name("Lexique.xlsx")
-TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
-N_PER_FEUIL_TAG = 5                  # 5×4×4 = 80 mots
-MAX_TRY_TAG     = MAX_TRY_FULL = 1_000
-rng             = random.Random()
+XLSX             = Path(__file__).with_name("Lexique.xlsx")
+TAGS             = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
+N_PER_FEUIL_TAG  = 5            # 5 mots × 4 feuilles × 4 tags = 80
+MAX_TRY_TAG      = MAX_TRY_FULL = 1_000
+rng              = random.Random()
 
-NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS  = ["PAIN", "EAU"]
+NUM_BASE         = ["nblettres", "nbphons", "old20", "pld20"]
+PRACTICE_WORDS   = ["PAIN", "EAU"]
 
-# dictionnaire d’alias « nom renvoyé par Lexique.xlsx → nom standard »
+# alias : toutes les graphies possibles → nom standard
 ALIAS = {
-    # nbre lettres
-    r"nb.?lettres?"  : "nblettres",
-    r"nb.?lettre"    : "nblettres",
-    # nbre phonèmes
-    r"nb.?phons?"    : "nbphons",
-    r"nb.?phon(?:emes?)?" : "nbphons",
-    # OLD20
-    r"old.?20"       : "old20",
-    # PLD20
-    r"pld.?20"       : "pld20",
+    r"nb.?lettres?"      : "nblettres",
+    r"nb.?lettre"        : "nblettres",
+    r"nb.?lettre.?tot"   : "nblettres",
+    r"nb.?phons?"        : "nbphons",
+    r"nb.?phon(?:emes?)?": "nbphons",
+    r"old.?20"           : "old20",
+    r"pld.?20"           : "pld20",
 }
 
-#────────────────────────── outils génériques ───────────────────────────────
+# ───────────────────────────── utilitaires ─────────────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
@@ -71,10 +70,10 @@ def to_float(s: pd.Series) -> pd.Series:
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:          # -1 LOW ; +1 HIGH ; 0 autre
-    return -1 if "LOW"  in tag else (1 if "HIGH" in tag else 0)
+def cat_code(tag: str) -> int:        # -1 = LOW, +1 = HIGH, 0 sinon
+    return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 
-#────────────────────────── 3. Lecture des feuilles ─────────────────────────
+# ──────────────────────── 1. lecture des feuilles ──────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
@@ -85,28 +84,28 @@ def load_sheets() -> Dict[str, Dict]:
     if len(shs) != 4:
         st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
 
-    feuilles, all_freq = {}, set()
+    feuilles: Dict[str, Dict] = {}
+    all_freq_cols: set[str]   = set()
 
     for sh in shs:
         df = xls.parse(sh)
         df.columns = df.columns.str.strip().str.lower()
 
-        # — renommage via dictionnaire d’alias ————————————————
+        # renommage via dictionnaire d’alias
         ren = {}
         for col in df.columns:
-            for pat, std in ALIAS.items():
-                if re.fullmatch(pat, col):
-                    ren[col] = std
-                    break
+            for patt, std in ALIAS.items():
+                if re.fullmatch(patt, col):
+                    ren[col] = std; break
         df = df.rename(columns=ren)
 
         freq_cols = [c for c in df.columns if c.startswith("freq")]
-        all_freq.update(freq_cols)
+        all_freq_cols.update(freq_cols)
 
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
-            st.warning(f"Feuille « {sh} » ignorée : colonnes manquantes.")
-            continue                # on zappe plutôt que planter
+            st.warning(f"Feuille « {sh} » ignorée (en-têtes manquants).")
+            continue    # on passe à la suivante
 
         for c in NUM_BASE + freq_cols:
             df[c] = to_float(df[c])
@@ -117,15 +116,17 @@ def load_sheets() -> Dict[str, Dict]:
         stats = {f"m_{c}": df[c].mean()        for c in NUM_BASE}
         stats |= {f"sd_{c}": df[c].std(ddof=0) for c in NUM_BASE + freq_cols}
 
-        feuilles[sh] = {"df": df, "stats": stats, "freq_cols": freq_cols}
+        feuilles[sh] = {"df": df,
+                        "stats": stats,
+                        "freq_cols": freq_cols}
 
     if len(feuilles) < 4:
-        st.error("Au moins une feuille invalide ; merci d’harmoniser les en-têtes."); st.stop()
+        st.error("Certaines feuilles sont invalides ; merci d’harmoniser les en-têtes."); st.stop()
 
-    feuilles["all_freq_cols"] = sorted(all_freq)
+    feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
-#────────────────────────── 4. Tirage des 80 mots ───────────────────────────
+# ───────────────────────── 2. tirage des 80 mots ───────────────────────────
 def masks(df, st_) -> Dict[str, pd.Series]:
     return {"LOW_OLD":  df.old20 < st_["m_old20"],
             "HIGH_OLD": df.old20 > st_["m_old20"],
@@ -133,16 +134,15 @@ def masks(df, st_) -> Dict[str, pd.Series]:
             "HIGH_PLD": df.pld20 > st_["m_pld20"]}
 
 def sd_ok(sub, st_, fq) -> bool:
-    if any(c not in sub.columns for c in ("nblettres", "nbphons", "old20", "pld20")):
+    if any(c not in sub.columns for c in NUM_BASE):
         return False
-    ok_num = all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT[c]
-                 for c in ("nblettres", "nbphons", "old20", "pld20"))
+    ok_num = all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT[c] for c in NUM_BASE)
     ok_fqs = all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq)
     return ok_num and ok_fqs
 
-def mean_lp_ok(s, st_) -> bool:
-    return (abs(s.nblettres.mean()-st_["m_nblettres"]) <= MEAN_DELTA["letters"]*st_["sd_nblettres"] and
-            abs(s.nbphons.mean()  -st_["m_nbphons"])   <= MEAN_DELTA["phons"]  *st_["sd_nbphons"])
+def mean_lp_ok(sub, st_) -> bool:
+    return (abs(sub.nblettres.mean()-st_["m_nblettres"]) <= MEAN_DELTA["letters"]*st_["sd_nblettres"] and
+            abs(sub.nbphons.mean()  -st_["m_nbphons"])   <= MEAN_DELTA["phons"]  *st_["sd_nbphons"])
 
 def pick_five(tag, feuille, used, F):
     df, st_ = F[feuille]["df"], F[feuille]["stats"]
@@ -151,38 +151,217 @@ def pick_five(tag, feuille, used, F):
     if len(pool) < N_PER_FEUIL_TAG: return None
 
     for _ in range(MAX_TRY_TAG):
-        samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0,1_000_000)).copy()
+        samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0, 1_000_000)).copy()
         if tag=="LOW_OLD"  and samp.old20.mean()>=st_["m_old20"]-MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag=="HIGH_OLD" and samp.old20.mean()<=st_["m_old20"]+MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag=="LOW_PLD"  and samp.pld20.mean()>=st_["m_pld20"]-MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
         if tag=="HIGH_PLD" and samp.pld20.mean()<=st_["m_pld20"]+MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
-        if not mean_lp_ok(samp,st_) or not sd_ok(samp,st_,fq): continue
-        samp["source"],samp["group"]=feuille,tag
-        samp["old_cat"]=cat_code(tag) if "OLD" in tag else 0
-        samp["pld_cat"]=cat_code(tag) if "PLD" in tag else 0
+        if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fq): continue
+        samp["source"], samp["group"] = feuille, tag
+        samp["old_cat"] = cat_code(tag) if "OLD" in tag else 0
+        samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
         return samp
     return None
 
 def build_sheet() -> pd.DataFrame:
-    F=load_sheets(); all_freq=F["all_freq_cols"]
+    F = load_sheets(); all_freq = F["all_freq_cols"]
     for _ in range(MAX_TRY_FULL):
-        taken={sh:set() for sh in F if sh!="all_freq_cols"}; groups=[]; ok=True
+        taken  = {sh:set() for sh in F if sh!="all_freq_cols"}
+        groups = []; ok=True
         for tag in TAGS:
             bloc=[]
             for sh in taken:
-                sub=pick_five(tag,sh,taken[sh],F)
+                sub = pick_five(tag, sh, taken[sh], F)
                 if sub is None: ok=False; break
                 bloc.append(sub); taken[sh].update(sub.ortho)
             if not ok: break
             groups.append(shuffled(pd.concat(bloc, ignore_index=True)))
         if ok:
-            df=pd.concat(groups, ignore_index=True)
-            order=["ortho"]+NUM_BASE+all_freq+["source","group","old_cat","pld_cat"]
+            df = pd.concat(groups, ignore_index=True)
+            order = ["ortho"] + NUM_BASE + all_freq + ["source","group","old_cat","pld_cat"]
             return df[order]
     st.error("Impossible de générer la liste ; vérifiez Lexique.xlsx."); st.stop()
 
-#────────────────────────── 5. HTML/JS de la tâche  (identique) ─────────────
-# … (inchangé, voir le code précédent : HTML_TPL, experiment_html) …
-# Pour raison de place, ces blocs sont identiques à la version précédente.
-#────────────────────────── 6. Navigation et pages Streamlit ────────────────
-# … idem version précédente …
+# ─────────────────── 3. génération HTML/JS de la tâche ────────────────────
+HTML_TPL = Template(r"""
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<style>
+html,body{height:100%;margin:0;display:flex;flex-direction:column;
+align-items:center;justify-content:center;font-family:'Courier New',monospace}
+#scr{font-size:60px;user-select:none}
+#ans{display:none;font-size:48px;width:60%;text-align:center}
+</style></head><body tabindex="0">
+<div id="scr"></div><input id="ans" autocomplete="off"/>
+<script>
+window.addEventListener("load",()=>document.body.focus());
+$FULLSCREEN
+const WORDS=$WORDS,CYCLE=$CYCLE,START=$START,STEP=$STEP;
+let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
+
+function nextTrial(){
+  if(trial>=WORDS.length){fin();return;}
+  const w=WORDS[trial],mask="#".repeat(w.length);
+  let show=START,hide=CYCLE-show,t0=performance.now(),active=true,tS,tH;
+  (function loop(){
+    if(!active)return;
+    scr.textContent=w;
+    tS=setTimeout(()=>{if(!active)return;
+      scr.textContent=mask;
+      tH=setTimeout(()=>{if(active){show+=STEP;hide=Math.max(0,CYCLE-show);loop();}},hide);
+    },show);
+  })();
+  function onSpace(e){
+    if(e.code==="Space"&&active){
+      active=false;clearTimeout(tS);clearTimeout(tH);
+      const rt=Math.round(performance.now()-t0);
+      window.removeEventListener("keydown",onSpace);
+      scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
+      ans.addEventListener("keydown",function onEnter(ev){
+        if(ev.key==="Enter"){
+          ev.preventDefault();
+          results.push({word:w,rt_ms:rt,response:ans.value.trim()});
+          ans.removeEventListener("keydown",onEnter);
+          ans.style.display="none";trial++;nextTrial();
+        }});
+    }}
+  window.addEventListener("keydown",onSpace);}
+function fin(){scr.style.fontSize="40px";scr.textContent=$END_MSG;$DOWNLOAD}
+$STARTER
+</script></body></html>
+""")
+
+def experiment_html(words: List[str], *, with_download=True,
+                    cycle_ms=350, start_ms=14, step_ms=14, fullscreen=False) -> str:
+    download_js=""
+    if with_download:
+        download_js = r"""
+const csv=["word;rt_ms;response",...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
+const a=document.createElement("a");
+a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+a.download="results.csv";a.textContent="Télécharger les résultats";
+a.style.fontSize="32px";a.style.marginTop="30px";
+document.body.appendChild(a);""".replace("$","$$")
+
+    starter="nextTrial();"
+    fullscreen_js=""
+    if fullscreen:
+        starter=r"""
+scr.textContent="Appuyez sur la barre ESPACE pour commencer";
+function first(e){if(e.code==="Space"){window.removeEventListener("keydown",first);
+document.documentElement.requestFullscreen?.();nextTrial();}}
+window.addEventListener("keydown",first);"""
+
+    return HTML_TPL.substitute(
+        WORDS=json.dumps(list(words)),
+        CYCLE=cycle_ms, START=start_ms, STEP=step_ms,
+        END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
+        DOWNLOAD=download_js, FULLSCREEN=fullscreen_js, STARTER=starter)
+
+# ───────────────────────── 4. variables de session ─────────────────────────
+for k,v in {"page":"screen_test","tirage_ok":False,"tirage_run":False,
+            "stimuli":[], "tirage_df":pd.DataFrame(),"exp_started":False,
+            "hz_val":None}.items():
+    st.session_state.setdefault(k,v)
+p = st.session_state
+
+# ─────────────────── 5. composant test de fréquence écran ──────────────────
+TEST_HTML = r"""
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<style>html,body{height:100%;margin:0;background:#000;color:#fff;
+display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#res{font-size:48px;margin:24px 0}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
+<h2>Test de fréquence</h2><div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
+<script>
+function mesure(){const r=document.getElementById('res'),b=document.getElementById('go');
+b.disabled=true;r.textContent='Mesure…';r.style.color='#fff';let f=0,t0=performance.now();
+function loop(){f++;if(f<120){requestAnimationFrame(loop);}else{
+const hz=f*1000/(performance.now()-t0);
+r.textContent='≈ '+hz.toFixed(1)+' Hz';
+Streamlit.setComponentValue(hz.toFixed(1));
+b.disabled=false;}}requestAnimationFrame(loop);}
+Streamlit.setComponentReady();
+</script></body></html>"""
+
+COMMERCIAL=[60,75,90,120,144]
+def nearest_hz(x:float)->int: return min(COMMERCIAL, key=lambda v:abs(v-x))
+def go(page:str): p.page=page; do_rerun()
+
+# ───────────────────────────── 6. PAGES ────────────────────────────────────
+# 0. — Test fréquence écran
+if p.page=="screen_test":
+    st.subheader("1. Vérification (facultative) de la fréquence d’écran")
+
+    html_kwargs=dict(height=520, scrolling=False)
+    if "key" in inspect.signature(components.html).parameters:
+        html_kwargs["key"]="hz_key"
+    val=components.html(TEST_HTML, **html_kwargs)
+
+    if isinstance(val,(int,float,str)):
+        try: p.hz_val=float(val)
+        except ValueError: pass
+    if p.hz_val is not None:
+        st.write(f"Fréquence détectée ≈ **{nearest_hz(p.hz_val)} Hz**")
+
+    st.divider()
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        if st.button("Suivant 60 Hz ➜"):  go("intro")
+    with c2:
+        if st.button("Suivant 120 Hz ➜"): go("intro")
+    with c3:
+        if st.button("Suivant Autre Hz ➜"): go("incompatible")
+
+# 1. — Présentation + tirage
+elif p.page=="intro":
+    st.subheader("2. Présentation de la tâche")
+    st.markdown("""
+Des mots seront affichés très brièvement puis masqués (`#####`).
+
+• Fixez le centre de l’écran.  
+• Dès que vous reconnaissez un mot, appuyez sur **ESPACE**.  
+• Tapez ensuite le mot puis **Entrée**.  
+
+Déroulement : 2 essais d’entraînement puis 80 essais de test.
+""")
+    if not p.tirage_run and not p.tirage_ok:
+        p.tirage_run=True; do_rerun()
+
+    elif p.tirage_run and not p.tirage_ok:
+        with st.spinner("Tirage aléatoire des 80 mots…"):
+            df=build_sheet(); mots=df["ortho"].tolist(); random.shuffle(mots)
+            p.tirage_df=df; p.stimuli=mots
+            p.tirage_ok=True; p.tirage_run=False
+        st.success("Tirage terminé !")
+
+    if p.tirage_ok and st.button("Commencer la familiarisation"):
+        go("fam")
+
+# 1-bis — écran incompatible
+elif p.page=="incompatible":
+    st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
+    st.write("Vous ne pouvez pas poursuivre l’étude.")
+
+# 2. — Familiarisation
+elif p.page=="fam":
+    st.header("Familiarisation (2 mots)")
+    st.markdown("Appuyez sur **ESPACE** dès qu’un mot apparaît, tapez-le puis **Entrée**.")
+    components.html(experiment_html(PRACTICE_WORDS, with_download=False),
+                    height=650, scrolling=False)
+    st.divider()
+    if st.button("Passer au test principal"):
+        p.page="exp"; p.exp_started=False; do_rerun()
+
+# 3. — Test principal
+elif p.page=="exp":
+    if not p.exp_started:
+        st.header("Test principal : 80 mots")
+        with st.expander("Aperçu (5 premières lignes) du tirage :"):
+            st.dataframe(p.tirage_df.head())
+        if st.button("Commencer le test (plein écran)"):
+            p.exp_started=True; do_rerun()
+    else:
+        components.html(experiment_html(p.stimuli, with_download=True, fullscreen=True),
+                        height=700, scrolling=False)
+
+else:
+    st.stop()
