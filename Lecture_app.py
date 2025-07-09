@@ -2,6 +2,7 @@
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
 (familiarisation + test principal ; contrôle 60/120 Hz)
+
 Exécution :   streamlit run exp3.py
 Dépendance :  Lexique.xlsx (Feuil1 … Feuil4)
 """
@@ -31,14 +32,14 @@ button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 
 # ───────────────── état par défaut ───────────────────────────────────────
 for k, v in dict(page="screen_test",
-                 hz_val=None,          # fréquence mesurée (float) ou None
+                 hz_val=None,
                  tirage_running=False,
                  tirage_ok=False).items():
     st.session_state.setdefault(k, v)
 p = st.session_state
 
 
-# ───────────────── constantes & fonctions « tirage » ─────────────────────
+# ───────────────── constantes & fonctions tirage ─────────────────────────
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -72,12 +73,14 @@ def cat_code(tag: str) -> int:
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
-        st.error("Fichier « Lexique.xlsx » introuvable"); st.stop()
+        st.error("Fichier « Lexique.xlsx » introuvable")
+        st.stop()
 
     xls    = pd.ExcelFile(XLSX)
     sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheets) != 4:
-        st.error("Le classeur doit contenir 4 feuilles Feuil1…Feuil4"); st.stop()
+        st.error("Le classeur doit contenir 4 feuilles Feuil1…Feuil4")
+        st.stop()
 
     feuilles, all_freq_cols = {}, set()
     for sh in sheets:
@@ -89,7 +92,8 @@ def load_sheets() -> dict[str, dict]:
 
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + fq
         if any(c not in df.columns for c in need):
-            st.error(f"Colonnes manquantes dans {sh}"); st.stop()
+            st.error(f"Colonnes manquantes dans {sh}")
+            st.stop()
 
         for c in NUM_BASE + fq:
             df[c] = to_float(df[c])
@@ -122,7 +126,8 @@ def sd_ok(sub, st_, fq) -> bool:
         sub.nbphons.std(ddof=0)   <= st_["sd_nbphons"]   * SD_MULT["phons"]   and
         sub.old20.std(ddof=0)     <= st_["sd_old20"]     * SD_MULT["old20"]   and
         sub.pld20.std(ddof=0)     <= st_["sd_pld20"]     * SD_MULT["pld20"]   and
-        all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq))
+        all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq)
+    )
 
 
 def mean_lp_ok(s, st_) -> bool:
@@ -130,7 +135,8 @@ def mean_lp_ok(s, st_) -> bool:
         abs(s.nblettres.mean() - st_["m_nblettres"])
             <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
         abs(s.nbphons.mean()  - st_["m_nbphons"])
-            <= MEAN_DELTA["phons"]   * st_["sd_nbphons"])
+            <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
+    )
 
 
 def pick_five(tag, feuille, used, F):
@@ -146,13 +152,17 @@ def pick_five(tag, feuille, used, F):
                            random_state=rng.randint(0, 1_000_000)).copy()
 
         if tag == "LOW_OLD" and samp.old20.mean() >= \
-           st_["m_old20"] - MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
+           st_["m_old20"] - MEAN_FACTOR_OLDPLD * st_["sd_old20"]:
+            continue
         if tag == "HIGH_OLD" and samp.old20.mean() <= \
-           st_["m_old20"] + MEAN_FACTOR_OLDPLD * st_["sd_old20"]:  continue
+           st_["m_old20"] + MEAN_FACTOR_OLDPLD * st_["sd_old20"]:
+            continue
         if tag == "LOW_PLD" and samp.pld20.mean() >= \
-           st_["m_pld20"] - MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:  continue
+           st_["m_pld20"] - MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:
+            continue
         if tag == "HIGH_PLD" and samp.pld20.mean() <= \
-           st_["m_pld20"] + MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:  continue
+           st_["m_pld20"] + MEAN_FACTOR_OLDPLD * st_["sd_pld20"]:
+            continue
 
         if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fq):
             continue
@@ -176,9 +186,13 @@ def build_sheet() -> pd.DataFrame:
             bloc = []
             for sh in taken:
                 sub = pick_five(tag, sh, taken[sh], F)
-                if sub is None: ok = False; break
-                bloc.append(sub); taken[sh].update(sub.ortho)
-            if not ok: break
+                if sub is None:
+                    ok = False
+                    break
+                bloc.append(sub)
+                taken[sh].update(sub.ortho)
+            if not ok:
+                break
             groups.append(shuffled(pd.concat(bloc, ignore_index=True)))
 
         if ok:
@@ -187,7 +201,8 @@ def build_sheet() -> pd.DataFrame:
                     ["source", "group", "old_cat", "pld_cat"]
             return df[order]
 
-    st.error("Impossible de générer la liste."); st.stop()
+    st.error("Impossible de générer la liste.")
+    st.stop()
 
 
 # ───────────────── composant HTML / JS : test fréquence ──────────────────
@@ -214,7 +229,7 @@ function mesure(){
             good=Math.abs(hz-60)<1.5;
       res.textContent='≈ '+hz.toFixed(1)+' Hz';
       res.style.color = good ? 'lime':'red';
-      Streamlit.setComponentValue(hz.toFixed(1));   // envoi à Python
+      Streamlit.setComponentValue(hz.toFixed(1));
       b.disabled=false;
     }}
   requestAnimationFrame(loop);
@@ -257,7 +272,7 @@ if p.page == "screen_test":
         if hz_r == 60:
             st.success("60 Hz – OK ✅")
         else:
-            st.error("Désolé, vous ne pouvez pas réaliser l’expérience.")
+            st.error("Désolé, fréquence détectée incompatible.")
             st.write(f"Fréquence détectée ≈ **{hz_r} Hz**")
     else:
         st.info("Cliquez sur « Démarrer » pour lancer la mesure.")
@@ -290,12 +305,14 @@ Des mots seront affichés très brièvement puis masqués (`#####`).
 """)
 
     if not p.tirage_running and not p.tirage_ok:
-        p.tirage_running = True; do_rerun()
+        p.tirage_running = True
+        do_rerun()
 
     elif p.tirage_running and not p.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
             df = build_sheet()
-            mots = df["ortho"].tolist(); random.shuffle(mots)
+            mots = df["ortho"].tolist()
+            random.shuffle(mots)
             p.stimuli = mots
             p.tirage_ok, p.tirage_running = True, False
         st.success("Tirage terminé !")
@@ -304,10 +321,10 @@ Des mots seront affichés très brièvement puis masqués (`#####`).
         go("fam")
 
 
-# 1bis. — Écran incompatible
+# 1-bis. — Écran incompatible
 elif p.page == "incompatible":
     st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
-    st.write("Merci de ne pas poursuivre.")
+    st.write("Vous ne pouvez pas poursuivre l’étude.")
 
 # 2. — Familiarisation
 elif p.page == "fam":
