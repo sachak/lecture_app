@@ -1,14 +1,15 @@
 # ─── exp3_frame.py ───────────────────────────────────────────────────────
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – Reconnaissance de mots masqués
-• 60 / 120 Hz
+EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
+• Choix écran 60 / 120 Hz
+• Croix de fixation 500 ms
 • Responsive (TV, PC, tablette, smartphone)
-• Mobile : tap + clavier virtuel QWERTZ (sans suggestions)
-• PWA : ajout à l’écran d’accueil = plein-écran natif
+• Mobile : tap + clavier virtuel QWERTZ (aucune suggestion)
+• Plein-écran actif sur tous les supports (allow_fullscreen =True)
 """
 from __future__ import annotations
-import inspect, json, random, time
+import inspect, json, random
 from pathlib import Path
 from string import Template
 from typing import Dict, List
@@ -18,7 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
-# ────────────────────── Streamlit helpers ───────────────────────────────
+# ────────────────────── helpers Streamlit ───────────────────────────────
 def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -48,7 +49,9 @@ SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
 # ────────────────────────── utilitaires ---------------------------------
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
-        s.astype(str).str.replace(r"[ ,\xa0]", "", regex=True).str.replace(",", "."),
+        s.astype(str)
+         .str.replace(r"[ ,\xa0]", "", regex=True)
+         .str.replace(",", "."),
         errors="coerce",
     )
 
@@ -58,14 +61,15 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 def cat_code(tag:str)->int: return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 def nearest_hz(x:float)->int: return min([60,75,90,120,144], key=lambda v:abs(v-x))
 
-# ───── 1. lecture Excel ─────────────────────────────────────────────────
+# ────── 1. lecture Excel ────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets()->Dict[str,Dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable"); st.stop()
+
     xls  = pd.ExcelFile(XLSX)
     shs  = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
-    if len(shs)!=4: st.error("Il faut exactement 4 feuilles Feuil1…Feuil4"); st.stop()
+    if len(shs)!=4: st.error("Il faut 4 feuilles Feuil1…Feuil4"); st.stop()
 
     feuilles, all_freq = {}, set()
     for sh in shs:
@@ -73,19 +77,23 @@ def load_sheets()->Dict[str,Dict]:
         df.columns = df.columns.str.strip().str.lower()
         freq = [c for c in df.columns if c.startswith("freq")]
         all_freq.update(freq)
+
         need = ["ortho","old20","pld20","nblettres","nbphons"]+freq
         if any(c not in df.columns for c in need):
             st.error(f"Colonnes manquantes dans {sh}"); st.stop()
-        for c in NUM_BASE+freq: df[c]=to_float(df[c])
-        df["ortho"]=df["ortho"].astype(str).str.upper()
+
+        for c in NUM_BASE+freq: df[c] = to_float(df[c])
+        df["ortho"] = df["ortho"].astype(str).str.upper()
         df = df.dropna(subset=need).reset_index(drop=True)
-        stats = {f"m_{c}":df[c].mean() for c in NUM_BASE}
-        stats|={f"sd_{c}":df[c].std(ddof=0) for c in NUM_BASE+freq}
-        feuilles[sh]=dict(df=df,stats=stats,freq_cols=freq)
-    feuilles["all_freq_cols"]=sorted(all_freq)
+
+        stats = {f"m_{c}": df[c].mean()        for c in NUM_BASE}
+        stats|={f"sd_{c}":df[c].std(ddof=0)   for c in NUM_BASE+freq}
+        feuilles[sh] = dict(df=df,stats=stats,freq_cols=freq)
+
+    feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
 
-# ───── 2. tirage 80 mots ────────────────────────────────────────────────
+# ────── 2. tirage 80 mots ───────────────────────────────────────────────
 def masks(df, st_): return dict(
     LOW_OLD = df.old20 < st_["m_old20"],
     HIGH_OLD= df.old20 > st_["m_old20"],
@@ -142,163 +150,118 @@ def build_sheet()->pd.DataFrame:
             return df[["ortho"]+NUM_BASE+all_freq+["source","group","old_cat","pld_cat"]]
     st.error("Impossible de générer la liste."); st.stop()
 
-# ───── 3. template HTML PWA + clavier virtuel ───────────────────────────
+# ────── 3. gabarit HTML (clavier virtuel, responsive) ───────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="theme-color" content="#000000"/>
-<link rel="manifest" id="pwa-manifest">
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <style>
 html,body{margin:0;width:100vw;height:100vh;background:#000;color:#fff;
           display:flex;flex-direction:column;align-items:center;justify-content:center;
           font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation}
-#container{display:flex;flex-direction:column;align-items:center;justify-content:center}
-#scr{font-size:7vw;line-height:1.15;max-width:90vw;text-align:center;
-     user-select:none;color:#fff;text-shadow:0 2px 6px #222}
-#ans{display:none;font-size:5vw;min-font-size:22px;width:70vw;max-width:92vw;
+#scr{font-size:7vw;line-height:1.2;max-width:90vw;text-align:center;
+     user-select:none;text-shadow:0 2px 6px #222}
+#ans{display:none;font-size:5vw;width:70vw;max-width:92vw;
      text-align:center;background:#fff;color:#000;border:none;padding:1.1vw .6vw;
-     margin-top:2vh;border-radius:.5vw;box-shadow:0 2px 8px #3335;outline:none}
+     margin-top:2vh;border-radius:.5vw;outline:none}
 #vk{display:none;flex-direction:column;align-items:center;margin-top:2vh}
 .krow{display:flex;justify-content:center;margin:.2vh 0}
-.key{user-select:none;border:none;margin:0 .8vw;border-radius:.8vw;
-     background:#333;color:#fff;font-weight:600;font-size:6vw;min-width:8vw;padding:.6vh 0}
+.key{border:none;margin:0 .8vw;border-radius:.8vw;background:#333;color:#fff;
+     font-weight:600;font-size:6vw;min-width:8vw;padding:.6vh 0;user-select:none}
 .key:active{background:#555}
 @media (min-width:500px){.key{font-size:28px}}
 @media (max-width:700px){#scr{font-size:14vw}#ans{font-size:8vw}}
 @media (max-width:470px){#scr{font-size:18vw}#ans{font-size:11vw}}
-@media (min-width:1600px) and (min-height:900px){#scr{font-size:4vw}#ans{font-size:2.5vw}}
 </style></head><body tabindex="0">
-<div id="container">
-  <div id="scr"></div>
-  <input id="ans" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
-  <div id="vk"></div>
-</div>
+<div id="scr"></div><input id="ans"/><div id="vk"></div>
 <script>
-/* ---------- PWA manifest + SW --------------------------------------- */
-(function(){
-  const manifest={
-    name:"Expérience 3",short_name:"Exp3",start_url:".",display:"standalone",
-    background_color:"#000000",theme_color:"#000000",icons:[]
-  };
-  const blob=new Blob([JSON.stringify(manifest)],{type:"application/json"});
-  document.getElementById('pwa-manifest').href=URL.createObjectURL(blob);
-  if('serviceWorker' in navigator){
-    const sw="self.addEventListener('fetch',e=>{});";
-    navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:"text/js"})));
-  }
-})();
-/* ---------- outils JS ----------------------------------------------- */
 function gid(x){return document.getElementById(x);}
 function resizeAll(){
   let w=innerWidth,h=innerHeight,base=Math.min(w,h);
-  gid('scr').style.fontSize=Math.max(Math.round(base*0.08),26)+'px';
-  gid('ans').style.fontSize=Math.max(Math.round(base*0.054),20)+'px';
+  gid('scr').style.fontSize=Math.max(base*0.08,26)+'px';
+  gid('ans').style.fontSize=Math.max(base*0.054,20)+'px';
   gid('ans').style.width=Math.min(w*0.7,650)+'px';
 }
-addEventListener('resize',resizeAll);
-addEventListener('orientationchange',resizeAll);
+addEventListener('resize',resizeAll);addEventListener('orientationchange',resizeAll);
 addEventListener('load',()=>{setTimeout(resizeAll,60);});
 
-/* ------ paramètres Python ------------------------------------------- */
+/* --- paramètres Python --- */
 const WORDS=$WORDS,START_F=$STARTF,STEP_F=$STEPF,CYCLE_F=$CYCLEF,CROSS_F=$CROSSF;
 const TOUCH_TRIG=$ENABLE_TOUCH;
-/* -------------------------------------------------------------------- */
+/* -------------------------- */
 const IS_TOUCH=('ontouchstart'in window)||(navigator.maxTouchPoints>0);
-let trial=0,results=[],scr=gid('scr'),ans=gid('ans'),vk=gid('vk');
-let finishAnswer=()=>{};
+let trial=0,results=[],scr=gid('scr'),ans=gid('ans'),vk=gid('vk');let finishAnswer=()=>{};
 
-/* ---------- clavier virtuel ----------------------------------------- */
+/* ---------- clavier virtuel ---------- */
 function buildVK(){
   if(vk.firstChild)return;
-  const rows=["QWERTZUIOP","ASDFGHJKL","YXCVBNMÉÈÇÏ","←↵"];
-  rows.forEach(r=>{
-    const div=document.createElement('div');div.className='krow';
-    [...r].forEach(c=>{const b=document.createElement('button');b.className='key';b.textContent=c;div.appendChild(b);});
-    vk.appendChild(div);
+  ["QWERTZUIOP","ASDFGHJKL","YXCVBNMÉÈÇÏ","←↵"].forEach(r=>{
+    const d=document.createElement('div');d.className='krow';
+    [...r].forEach(c=>{let b=document.createElement('button');b.className='key';b.textContent=c;d.appendChild(b);});
+    vk.appendChild(d);
   });
   vk.addEventListener('pointerdown',e=>{
     const t=e.target;if(!t.classList.contains('key'))return;
-    e.preventDefault();
-    const k=t.textContent;
+    e.preventDefault();const k=t.textContent;
     if(k==="←")ans.value=ans.value.slice(0,-1);
-    else if(k==="↵")finishAnswer();
-    else ans.value+=k;
+    else if(k==="↵")finishAnswer();else ans.value+=k;
   },{passive:false});
 }
 
-/* ---------- séquence d’un essai ------------------------------------- */
+/* ---------- séquence d’un essai ---------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
   const w=WORDS[trial],mask="#".repeat(w.length);let active=true;
   scr.textContent="+";let frame=0;
-  const crossLoop=()=>{if(!active)return;
-    if(++frame>=CROSS_F)startStimulus();else requestAnimationFrame(crossLoop);}
-  requestAnimationFrame(crossLoop);
-
-  function startStimulus(){
-    let showF=START_F,phase="show",f2=0;const t0=performance.now();
-    function stimLoop(){
+  (function loop(){if(!active)return;
+    if(++frame>=CROSS_F)startSt();else requestAnimationFrame(loop);})();
+  function startSt(){
+    let showF=START_F,phase="s",f2=0;const t0=performance.now();
+    (function stLoop(){
       if(!active)return;
-      if(phase==="show"){
-        if(f2===0)scr.textContent=w;
-        if(++f2>=showF){phase="mask";f2=0;scr.textContent=mask;}
-      }else{
-        const hideF=Math.max(0,CYCLE_F-showF);
-        if(++f2>=hideF){showF=Math.min(showF+STEP_F,CYCLE_F);phase="show";f2=0;}
-      }
-      requestAnimationFrame(stimLoop);
-    }
-    requestAnimationFrame(stimLoop);
-
-    function onTrig(e){
+      if(phase==="s"){if(f2===0)scr.textContent=w;
+        if(++f2>=showF){phase="m";f2=0;scr.textContent=mask;}
+      }else{if(++f2>=Math.max(0,CYCLE_F-showF)){
+        showF=Math.min(showF+STEP_F,CYCLE_F);phase="s";f2=0;}
+      }requestAnimationFrame(stLoop);} )();
+    function trig(e){
       if(e instanceof KeyboardEvent && e.code!=="Space")return;
       if(e instanceof PointerEvent)e.preventDefault();
-      if(!active)return;
-      active=false;removeEventListener('keydown',onTrig);
-      if(TOUCH_TRIG)removeEventListener('pointerdown',onTrig);
-      promptAnswer(Math.round(performance.now()-t0));
+      if(!active)return;active=false;removeEventListener('keydown',trig);
+      if(TOUCH_TRIG)removeEventListener('pointerdown',trig);
+      promptAns(Math.round(performance.now()-t0));
     }
-    addEventListener('keydown',onTrig);
-    if(TOUCH_TRIG)addEventListener('pointerdown',onTrig,{passive:false});
+    addEventListener('keydown',trig);
+    if(TOUCH_TRIG)addEventListener('pointerdown',trig,{passive:false});
   }
-
-  function promptAnswer(rt){
+  function promptAns(rt){
     scr.textContent="";ans.value="";ans.style.display="block";
     if(IS_TOUCH){ans.readOnly=true;buildVK();vk.style.display="flex";}
     else{ans.readOnly=false;setTimeout(()=>ans.focus(),40);}
     resizeAll();
-    function keyEnter(ev){if(ev.key==="Enter"){ev.preventDefault();finishAnswer();}}
-    addEventListener('keydown',keyEnter);
+    function onEnter(ev){if(ev.key==="Enter"){ev.preventDefault();finishAnswer();}}
+    addEventListener('keydown',onEnter);
     finishAnswer=function(){
-      removeEventListener('keydown',keyEnter);
+      removeEventListener('keydown',onEnter);
       ans.style.display="none";vk.style.display="none";
       results.push({word:w,rt_ms:rt,response:ans.value.trim()});
       trial++;nextTrial();
     };
   }
 }
-/* ---------- fin ------------------------------------------------------ */
-function fin(){
-  scr.style.fontSize="min(6vw,48px)";
-  scr.textContent=$END_MSG;$DOWNLOAD;resizeAll();
-}
-/* ---------- démarrage ----------------------------------------------- */
-function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||navigator.standalone;}
+function fin(){scr.textContent=$END_MSG;$DOWNLOAD;resizeAll();}
 scr.textContent="Touchez l’écran ou appuyez sur ESPACE pour commencer";
 function first(e){
   if((e instanceof KeyboardEvent && e.code==="Space")||(e instanceof PointerEvent)){
     removeEventListener('keydown',first);removeEventListener('pointerdown',first);
-    if(!isStandalone() && !IS_TOUCH){document.documentElement.requestFullscreen?.();}
+    if(!IS_TOUCH){document.documentElement.requestFullscreen?.();}
     nextTrial();
   }}
-addEventListener('keydown',first);
-addEventListener('pointerdown',first,{passive:false});
+addEventListener('keydown',first);addEventListener('pointerdown',first,{passive:false});
 </script></body></html>""")
 
-# ───── 3-bis. fonction de construction HTML -----------------------------
-def experiment_html(words:List[str],hz:int,*,with_download=True,touch_trigger=True)->str:
+# ────── 3-bis. constructeur HTML ----------------------------------------
+def experiment_html(words:List[str], hz:int, *,
+                    with_download=True, touch_trigger=True)->str:
     frame  =1000/hz
     cycle_f=int(round(CYCLE_MS/frame))
     cross_f=int(round(CROSS_MS/frame))
@@ -318,14 +281,109 @@ document.body.appendChild(a);""".replace("$","$$")
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(list(words)),
-        STARTF=start_f,STEPF=step_f,CYCLEF=cycle_f,CROSSF=cross_f,
+        STARTF=start_f,STEPF=step_f,
+        CYCLEF=cycle_f,CROSSF=cross_f,
         END_MSG=json.dumps("Merci !"),
-        DOWNLOAD=dl_js,ENABLE_TOUCH=("true" if touch_trigger else "false")
+        DOWNLOAD=dl_js,
+        ENABLE_TOUCH=("true" if touch_trigger else "false")
     )
 
-# ───── 4. composant test fréquence (identique) --------------------------
-TEST_HTML = r""" <same as précédent> """
+# ────── 4. composant test fréquence (identique) ─────────────────────────
+TEST_HTML=r"""
+<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<style>html,body{margin:0;height:100%;display:flex;flex-direction:column;
+align-items:center;justify-content:center;background:#000;color:#fff;text-align:center}
+#res{font-size:48px;margin:24px}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
+<h2>Test de fréquence</h2><div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
+<script>
+function mesure(){const r=document.getElementById('res'),b=document.getElementById('go');
+b.disabled=true;r.textContent='Mesure…';let f=0,t0=performance.now();
+function loop(){f++;if(f<120){requestAnimationFrame(loop);}else{
+const hz=f*1000/(performance.now()-t0);r.textContent='≈ '+hz.toFixed(1)+' Hz';
+Streamlit.setComponentValue(hz.toFixed(1));b.disabled=false;}}
+requestAnimationFrame(loop);}Streamlit.setComponentReady();
+</script></body></html>"""
 
-# ───── 5-6. état session & navigation Streamlit (identiques) ------------
-# (reprendre sans aucune modification la fin du script précédent,
-#  de defaults jusqu’à st.stop())
+# ────── 5. état de session ---------------------------------------------
+defaults = {"page":"screen_test","tirage_ok":False,"tirage_run":False,
+            "stimuli":[], "tirage_df":pd.DataFrame(),"exp_started":False,
+            "hz_val":None,"hz_sel":None}
+for k,v in defaults.items(): st.session_state.setdefault(k,v)
+p=st.session_state
+def go(page:str): p.page=page; do_rerun()
+
+# ────── 6. navigation / pages ------------------------------------------
+if p.page=="screen_test":
+    st.subheader("1. Vérification (facultative) de la fréquence d’écran")
+    kw=dict(height=520,scrolling=False,allow_fullscreen=True)
+    if "key" in inspect.signature(components.html).parameters: kw["key"]="hz"
+    val=components.html(TEST_HTML,**kw)
+    if isinstance(val,(int,float,str)):
+        try: p.hz_val=float(val)
+        except ValueError: pass
+    if p.hz_val is not None:
+        st.write(f"Fréquence détectée ≈ **{nearest_hz(p.hz_val):d} Hz**")
+    st.divider()
+    c1,c2,c3=st.columns(3)
+    with c1:
+        if st.button("Suivant 60 Hz ➜"): p.hz_sel=60; go("intro")
+    with c2:
+        if st.button("Suivant 120 Hz ➜"): p.hz_sel=120; go("intro")
+    with c3:
+        if st.button("Autre ➜"):          go("incompatible")
+
+elif p.page=="incompatible":
+    st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
+
+elif p.page=="intro":
+    st.subheader("2. Présentation de la tâche")
+    st.markdown(f"""
+Écran sélectionné : **{p.hz_sel} Hz**
+
+Chaque essai : croix 500 ms → mot bref → masque (`#####`).
+
+• Fixez le centre de l’écran  
+• Dès que vous reconnaissez le mot, **touchez l’écran OU appuyez sur ESPACE**  
+• Tapez ensuite le mot (clavier virtuel sur mobile) puis **↵ / Entrée**
+
+Déroulement : 2 essais d’entraînement + 80 essais de test.
+""")
+    if not p.tirage_run and not p.tirage_ok:
+        p.tirage_run=True; do_rerun()
+    elif p.tirage_run and not p.tirage_ok:
+        with st.spinner("Tirage aléatoire des 80 mots…"):
+            df=build_sheet(); mots=df["ortho"].tolist(); random.shuffle(mots)
+            p.tirage_df=df; p.stimuli=mots
+            p.tirage_ok=True; p.tirage_run=False
+        st.success("Tirage terminé !")
+    if p.tirage_ok and st.button("Commencer la familiarisation"):
+        go("fam")
+
+elif p.page=="fam":
+    st.header("Familiarisation (2 mots)")
+    st.write("Croix 500 ms → mot → masque. Touchez l’écran ou appuyez sur ESPACE dès que possible.")
+    components.html(
+        experiment_html(PRACTICE_WORDS, p.hz_sel,
+                        with_download=False, touch_trigger=False),
+        height=650, scrolling=False, allow_fullscreen=True
+    )
+    st.divider()
+    if st.button("Passer au test principal"):
+        p.page="exp"; p.exp_started=False; do_rerun()
+
+elif p.page=="exp":
+    if not p.exp_started:
+        st.header("Test principal : 80 mots")
+        with st.expander("Aperçu (5 lignes)") :
+            st.dataframe(p.tirage_df.head())
+        if st.button("Commencer le test (plein écran)"):
+            p.exp_started=True; do_rerun()
+    else:
+        components.html(
+            experiment_html(p.stimuli, p.hz_sel,
+                            with_download=True, touch_trigger=True),
+            height=700, scrolling=False, allow_fullscreen=True
+        )
+else:
+    st.stop()
