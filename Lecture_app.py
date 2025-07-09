@@ -47,9 +47,9 @@ PRACTICE_WORDS    = ["PAIN", "EAU"]
 CYCLE_MS          = 350      # mot + masque
 CROSS_MS          = 500      # croix 500 ms
 
-MEAN_FACTOR_OLDPLD = .30
-MEAN_DELTA         = dict(letters=.69, phons=.69)
-SD_MULT            = dict(letters=2, phons=2, old20=.29, pld20=.29, freq=1.9)
+MEAN_FACTOR_OLDPLD = .40
+MEAN_DELTA         = dict(letters=.60, phons=.60)
+SD_MULT            = dict(letters=2, phons=2, old20=.20, pld20=.20, freq=1.5)
 
 # ────────────────────────── petits utilitaires ──────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
