@@ -1,10 +1,11 @@
 # ─── exp3_frame.py ───────────────────────────────────────────────────────
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – Reconnaissance de mots masqués (version frame-accurate)
-• Test de fréquence d’écran
+EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
+• Test de fréquence (rAF)
 • Choix 60 Hz / 120 Hz / autre
-• requestAnimationFrame pour la présentation
+• Croix de fixation 500 ms avant chaque mot
+• Présentation pilotée par requestAnimationFrame
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
-# ──────────────────────────── outil rerun ────────────────────────────────
+# ──────────────────── outil rerun (Streamlit < 1.26 & ≥ 1.26) ────────────
 def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
 
@@ -28,8 +29,7 @@ st.markdown("""
 <style>
 #MainMenu, header, footer{visibility:hidden;}
 button:disabled{opacity:.45!important;cursor:not-allowed!important;}
-</style>
-""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
 # ──────────────────────────── constantes ─────────────────────────────────
 XLSX               = Path(__file__).with_name("Lexique.xlsx")
@@ -40,7 +40,9 @@ rng                = random.Random()
 
 NUM_BASE           = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS     = ["PAIN", "EAU"]
-CYCLE_MS           = 350                     # mot+masque (≈21 frames @60 Hz)
+
+CYCLE_MS           = 350     # durée mot+masque
+CROSS_MS           = 500     # fixation « + » avant chaque mot
 
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
@@ -156,7 +158,7 @@ def build_sheet() -> pd.DataFrame:
             return df[["ortho"]+NUM_BASE+ALL+["source","group","old_cat","pld_cat"]]
     st.error("Impossible de générer la liste."); st.stop()
 
-# ────── 3. gabarit HTML « frame-accurate » ───────────────────────────────
+# ────── 3. gabarit HTML (fixation + rAF) ─────────────────────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -170,54 +172,87 @@ html,body{height:100%;margin:0;background:#000;color:#fff;
 <div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 window.addEventListener("load",()=>document.body.focus());
-/* -------- paramètres passés par Python -------------------------------- */
+/* ---------------- paramètres insérés depuis Python ------------------- */
 const WORDS   = $WORDS;
-const START_F = $STARTF;           // 1 f @60Hz ; 2 f @120Hz
+const START_F = $STARTF;           // 1 f @60 Hz ; 2 f @120 Hz
 const STEP_F  = $STEPF;
-const CYCLE_F = $CYCLEF;           // ≈21 f @60Hz ; 42 f @120Hz
-/* ---------------------------------------------------------------------- */
+const CYCLE_F = $CYCLEF;           // ≈21 f @60 Hz ; 42 f @120 Hz
+const CROSS_F = $CROSSF;           // 30 f @60 Hz ; 60 f @120 Hz
+/* --------------------------------------------------------------------- */
 let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
-function nextTrial(){if(trial>=WORDS.length){fin();return;}
- const w=WORDS[trial],mask="#".repeat(w.length);
- let showF=START_F,phase="show",frame=0,active=true,t0=performance.now();
- function raf(){
-   if(!active)return;
-   if(phase==="show"){
-     if(frame===0) scr.textContent=w;
-     if(++frame>=showF){phase="mask";frame=0;scr.textContent=mask;}
-   }else{
-     const hideF=Math.max(0,CYCLE_F-showF);
-     if(++frame>=hideF){showF=Math.min(showF+STEP_F,CYCLE_F);phase="show";frame=0;}
-   }
-   requestAnimationFrame(raf);
- }
- requestAnimationFrame(raf);
- function onSpace(e){if(e.code==="Space"&&active){
-   active=false;window.removeEventListener("keydown",onSpace);
-   const rt=Math.round(performance.now()-t0);
-   scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
-   ans.addEventListener("keydown",function onEnter(ev){
-     if(ev.key==="Enter"){ev.preventDefault();
-       results.push({word:w,rt_ms:rt,response:ans.value.trim()});
-       ans.removeEventListener("keydown",onEnter);ans.style.display="none";
-       trial++;nextTrial();}});}}
- window.addEventListener("keydown",onSpace);}
+/* --------------------------------------------------------------------- */
+function nextTrial(){
+  if(trial>=WORDS.length){fin();return;}
+
+  const w=WORDS[trial], mask="#".repeat(w.length);
+  let active=true;
+
+  /* -------- 1. CROIX DE FIXATION ------------------------------------ */
+  let frame=0;
+  scr.textContent="+";
+  function crossLoop(){
+    if(!active)return;
+    if(++frame>=CROSS_F){ startStimulus(); }
+    else{ requestAnimationFrame(crossLoop); }
+  }
+  requestAnimationFrame(crossLoop);
+
+  /* -------- 2. MOT + MASQUE ----------------------------------------- */
+  function startStimulus(){
+    let showF=START_F, phase="show", f2=0;
+    const t0=performance.now();
+
+    function stimLoop(){
+      if(!active)return;
+      if(phase==="show"){
+        if(f2===0) scr.textContent=w;
+        if(++f2>=showF){ phase="mask"; f2=0; scr.textContent=mask; }
+      }else{                           // phase masque
+        const hideF=Math.max(0,CYCLE_F-showF);
+        if(++f2>=hideF){
+          showF=Math.min(showF+STEP_F,CYCLE_F);
+          phase="show"; f2=0;
+        }
+      }
+      requestAnimationFrame(stimLoop);
+    }
+    requestAnimationFrame(stimLoop);
+
+    /* ------ Gestion de la réponse ----------------------------------- */
+    function onSpace(e){
+      if(e.code==="Space"&&active){
+        active=false; window.removeEventListener("keydown",onSpace);
+        const rt=Math.round(performance.now()-t0);
+        scr.textContent=""; ans.style.display="block"; ans.value=""; ans.focus();
+        ans.addEventListener("keydown",function onEnter(ev){
+          if(ev.key==="Enter"){ ev.preventDefault();
+            results.push({word:w,rt_ms:rt,response:ans.value.trim()});
+            ans.removeEventListener("keydown",onEnter); ans.style.display="none";
+            trial++; nextTrial();
+          }
+        });
+      }
+    }
+    window.addEventListener("keydown",onSpace);
+  }
+}
+/* ----------- fin d'expérience ---------------------------------------- */
 function fin(){scr.style.fontSize="40px";scr.textContent=$END_MSG;$DOWNLOAD}
 $STARTER
 </script></body></html>""")
 
 def experiment_html(words: List[str], hz: int,
                     with_download=True, fullscreen=False) -> str:
-    """Construit le HTML avec minutage en images."""
     frame  = 1000 / hz
-    cycle_f= int(round(CYCLE_MS / frame))         # 21 f @60Hz ; 42 f @120Hz
-    scale  = hz // 60                             # 1 pour 60 ; 2 pour 120
+    cycle_f= int(round(CYCLE_MS  / frame))      # 21 f @60 Hz ; 42 f @120 Hz
+    cross_f= int(round(CROSS_MS / frame))       # 30 f @60 Hz ; 60 f @120 Hz
+    scale  = hz // 60                           # 1 pour 60 Hz ; 2 pour 120 Hz
     start_f= 1 * scale
     step_f = 1 * scale
 
-    download_js=""
+    dl_js=""
     if with_download:
-        download_js=r"""
+        dl_js=r"""
 const csv=["word;rt_ms;response",
            ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
 const a=document.createElement("a");
@@ -237,11 +272,11 @@ window.addEventListener("keydown",first);"""
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(list(words)),
-        STARTF=start_f, STEPF=step_f, CYCLEF=cycle_f,
+        STARTF=start_f, STEPF=step_f, CYCLEF=cycle_f, CROSSF=cross_f,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=download_js, STARTER=starter)
+        DOWNLOAD=dl_js, STARTER=starter)
 
-# ────── 4. composant de test fréquence écran ─────────────────────────────
+# ────── 4. composant test fréquence écran ────────────────────────────────
 TEST_HTML=r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>html,body{height:100%;margin:0;background:#000;color:#fff;
@@ -263,7 +298,6 @@ for k,v in {"page":"screen_test","tirage_ok":False,"tirage_run":False,
             "hz_val":None,"hz_sel":None}.items():
     st.session_state.setdefault(k,v)
 p=st.session_state
-
 def go(page:str): p.page=page; do_rerun()
 
 # ────── 6. PAGES ────────────────────────────────────────────────────────
@@ -300,10 +334,10 @@ elif p.page=="intro":
     st.markdown(f"""
 Écran sélectionné : **{p.hz_sel} Hz**
 
-Des mots sont présentés très brièvement puis masqués (`#####`).
+Chaque essai : croix de fixation (500 ms) → mot très bref → masque (`#####`).
 
 • Fixez le centre de l’écran.  
-• Dès que vous reconnaissez un mot, appuyez sur **ESPACE**.  
+• Dès que vous reconnaissez le mot, appuyez sur **ESPACE**.  
 • Tapez ensuite le mot puis **Entrée**.  
 
 Déroulement : 2 essais d’entraînement puis 80 essais de test.
@@ -322,7 +356,7 @@ Déroulement : 2 essais d’entraînement puis 80 essais de test.
 # 3. familiarisation
 elif p.page=="fam":
     st.header("Familiarisation (2 mots)")
-    st.write("Appuyez sur **ESPACE** dès qu’un mot apparaît, tapez-le puis **Entrée**.")
+    st.write("Croix 500 ms → mot → masque. Appuyez sur **ESPACE** dès que possible.")
     components.html(
         experiment_html(PRACTICE_WORDS, p.hz_sel, with_download=False, fullscreen=False),
         height=650, scrolling=False)
