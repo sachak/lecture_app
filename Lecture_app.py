@@ -8,7 +8,7 @@ Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
 
-import json, random, inspect
+import inspect, json, random
 from pathlib import Path
 from string import Template
 from typing import Dict, List
@@ -34,21 +34,20 @@ button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# 1. PARAMÈTRES GÉNÉRAUX
+# 1. PARAMÈTRES
 # =============================================================================
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = {"letters": .68, "phons": .68}
-SD_MULT            = {"letters": 2, "phons": 2,
-                      "old20": .28, "pld20": .28, "freq": 1.9}
+SD_MULT            = {"letters": 2, "phons": 2, "old20": .28, "pld20": .28, "freq": 1.9}
 
 XLSX               = Path(__file__).with_name("Lexique.xlsx")
 TAGS               = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
-N_PER_FEUIL_TAG    = 5            # 5 mots × 4 feuilles × 4 tags = 80
+N_PER_FEUIL_TAG    = 5                 # 5 mots × 4 feuilles × 4 tags = 80
 MAX_TRY_TAG        = MAX_TRY_FULL = 1_000
 rng                = random.Random()
 
 NUM_BASE           = ["nblettres", "nbphons", "old20", "pld20"]
-PRACTICE_WORDS     = ["PAIN", "EAU"]          # 2 essais d’entraînement
+PRACTICE_WORDS     = ["PAIN", "EAU"]   # 2 essais d’entraînement
 
 # =============================================================================
 # 2. OUTILS GÉNÉRIQUES
@@ -63,7 +62,7 @@ def to_float(s: pd.Series) -> pd.Series:
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:           # -1 = LOW ; +1 = HIGH ; 0 = autre
+def cat_code(tag: str) -> int:        # -1 = LOW ; +1 = HIGH ; 0 = autre
     return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 
 # =============================================================================
@@ -74,10 +73,23 @@ def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
 
-    xls          = pd.ExcelFile(XLSX)
-    sheet_names  = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
+    xls         = pd.ExcelFile(XLSX)
+    sheet_names = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheet_names) != 4:
         st.error("Il faut exactement 4 feuilles nommées Feuil1 … Feuil4."); st.stop()
+
+    # ── alias pour accepter plusieurs graphies de colonnes ─────────────────
+    alias = {
+        "nb_lettres": "nblettres",
+        "nblettre"  : "nblettres",
+        "nblettres" : "nblettres",
+        "nblettres" : "nblettres",
+        "nb_lettre" : "nblettres",
+        "nb_phons"  : "nbphons",
+        "nbphon"    : "nbphons",
+        "nbphons"   : "nbphons",
+        "nbphonemes": "nbphons"
+    }
 
     feuilles: Dict[str, Dict] = {}
     all_freq_cols: set[str]   = set()
@@ -85,25 +97,27 @@ def load_sheets() -> Dict[str, Dict]:
     for sh in sheet_names:
         df = xls.parse(sh)
         df.columns = df.columns.str.strip().str.lower()
-        fq_cols    = [c for c in df.columns if c.startswith("freq")]
-        all_freq_cols.update(fq_cols)
+        df = df.rename(columns={c: alias[c] for c in df.columns if c in alias})
 
-        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + fq_cols
+        freq_cols = [c for c in df.columns if c.startswith("freq")]
+        all_freq_cols.update(freq_cols)
+
+        need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + freq_cols
         if any(c not in df.columns for c in need):
-            st.error(f"Colonnes manquantes dans {sh}."); st.stop()
+            st.error(f"Colonnes manquantes ou mal nommées dans {sh}."); st.stop()
 
-        for col in NUM_BASE + fq_cols:
+        for col in NUM_BASE + freq_cols:
             df[col] = to_float(df[col])
 
         df["ortho"] = df["ortho"].astype(str).str.upper()
         df          = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean()        for c in NUM_BASE}
-        stats |= {f"sd_{c}": df[c].std(ddof=0) for c in NUM_BASE + fq_cols}
+        stats |= {f"sd_{c}": df[c].std(ddof=0) for c in NUM_BASE + freq_cols}
 
         feuilles[sh] = {"df": df,
                         "stats": stats,
-                        "freq_cols": fq_cols}
+                        "freq_cols": freq_cols}
 
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
@@ -126,12 +140,12 @@ def sd_ok(sub: pd.DataFrame, st_: Dict, fq_cols: List[str]) -> bool:
 
 def mean_lp_ok(sub: pd.DataFrame, st_: Dict) -> bool:
     return (abs(sub.nblettres.mean() - st_["m_nblettres"]) <= MEAN_DELTA["letters"]*st_["sd_nblettres"] and
-            abs(sub.nbphons.mean()  - st_["m_nbphons"])    <= MEAN_DELTA["phons"]  *st_["sd_nbphons"])
+            abs(sub.nbphons.mean()   - st_["m_nbphons"])   <= MEAN_DELTA["phons"]  *st_["sd_nbphons"])
 
 def pick_five(tag: str, feuille: str, used: set[str], F: Dict) -> pd.DataFrame | None:
-    df, st_  = F[feuille]["df"], F[feuille]["stats"]
-    fq_cols  = F[feuille]["freq_cols"]
-    pool     = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
+    df, st_ = F[feuille]["df"], F[feuille]["stats"]
+    fq_cols = F[feuille]["freq_cols"]
+    pool    = df.loc[masks(df, st_)[tag] & ~df.ortho.isin(used)]
 
     if len(pool) < N_PER_FEUIL_TAG:
         return None
@@ -142,7 +156,7 @@ def pick_five(tag: str, feuille: str, used: set[str], F: Dict) -> pd.DataFrame |
         if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
         if tag == "HIGH_PLD" and samp.pld20.mean() <= st_["m_pld20"] + MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
-        if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fq_cols):                                        continue
+        if not mean_lp_ok(samp, st_) or not sd_ok(samp, st_, fq_cols): continue
 
         samp["source"]  = feuille
         samp["group"]   = tag
@@ -158,7 +172,6 @@ def build_sheet() -> pd.DataFrame:
     for _ in range(MAX_TRY_FULL):
         taken  = {sh:set() for sh in F if sh != "all_freq_cols"}
         groups = []; ok=True
-
         for tag in TAGS:
             bloc=[]
             for sh in taken:
@@ -167,7 +180,6 @@ def build_sheet() -> pd.DataFrame:
                 bloc.append(sub); taken[sh].update(sub.ortho)
             if not ok: break
             groups.append(shuffled(pd.concat(bloc, ignore_index=True)))
-
         if ok:
             df = pd.concat(groups, ignore_index=True)
             order = ["ortho"] + NUM_BASE + all_freq_cols + ["source","group","old_cat","pld_cat"]
@@ -176,13 +188,12 @@ def build_sheet() -> pd.DataFrame:
     st.error("Impossible de générer la liste."); st.stop()
 
 # =============================================================================
-# 4. GÉNÉRATION DU HTML / JS DE LA TÂCHE
+# 4. GÉNÉRATION HTML / JS DE LA TÂCHE
 # =============================================================================
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
-html,body{height:100%;margin:0;display:flex;flex-direction:column;
-          align-items:center;justify-content:center;font-family:'Courier New',monospace}
+html,body{height:100%;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Courier New',monospace}
 #scr{font-size:60px;user-select:none}
 #ans{display:none;font-size:48px;width:60%;text-align:center}
 </style></head><body tabindex="0">
@@ -190,72 +201,58 @@ html,body{height:100%;margin:0;display:flex;flex-direction:column;
 <script>
 window.addEventListener("load",()=>document.body.focus());
 $FULLSCREEN
-const WORDS = $WORDS, CYCLE=$CYCLE, START=$START, STEP=$STEP;
-let trial=0, results=[], scr=document.getElementById("scr"), ans=document.getElementById("ans");
-
-function nextTrial(){
-  if(trial>=WORDS.length){ end(); return; }
-  const w=WORDS[trial], mask="#".repeat(w.length);
-  let show=START, hide=CYCLE-show, t0=performance.now(), active=true, tS,tH;
-
-  (function loop(){
-    if(!active) return;
-    scr.textContent=w;
-    tS=setTimeout(()=>{ if(!active)return;
-      scr.textContent=mask;
-      tH=setTimeout(()=>{ if(active){ show+=STEP; hide=Math.max(0,CYCLE-show); loop(); }}, hide);
-    }, show);
-  })();
-
-  function onSpace(e){
-    if(e.code==="Space"&&active){
-      active=false; clearTimeout(tS); clearTimeout(tH);
-      const rt=Math.round(performance.now()-t0);
-      window.removeEventListener("keydown",onSpace);
-      scr.textContent=""; ans.style.display="block"; ans.value=""; ans.focus();
-      ans.addEventListener("keydown",function onEnter(ev){
-        if(ev.key==="Enter"){ ev.preventDefault();
-          results.push({word:w,rt_ms:rt,response:ans.value.trim()});
-          ans.removeEventListener("keydown",onEnter); ans.style.display="none";
-          trial++; nextTrial();
-        }});
-    }}
-  window.addEventListener("keydown",onSpace);
-}
-function end(){
-  scr.style.fontSize="40px"; scr.textContent=$END_MSG;
-  $DOWNLOAD
-}
+const WORDS=$WORDS,CYCLE=$CYCLE,START=$START,STEP=$STEP;
+let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
+function nextTrial(){if(trial>=WORDS.length){end();return;}
+ const w=WORDS[trial],mask="#".repeat(w.length);let show=START,hide=CYCLE-show,t0=performance.now(),active=true,tS,tH;
+ (function loop(){if(!active)return;
+   scr.textContent=w;
+   tS=setTimeout(()=>{if(!active)return;
+     scr.textContent=mask;
+     tH=setTimeout(()=>{if(active){show+=STEP;hide=Math.max(0,CYCLE-show);loop();}},hide);
+   },show);
+ })();
+ function onSpace(e){if(e.code==="Space"&&active){
+   active=false;clearTimeout(tS);clearTimeout(tH);
+   const rt=Math.round(performance.now()-t0);
+   window.removeEventListener("keydown",onSpace);
+   scr.textContent="";ans.style.display="block";ans.value="";ans.focus();
+   ans.addEventListener("keydown",function onEnter(ev){
+     if(ev.key==="Enter"){ev.preventDefault();
+       results.push({word:w,rt_ms:rt,response:ans.value.trim()});
+       ans.removeEventListener("keydown",onEnter);ans.style.display="none";
+       trial++;nextTrial();}});}}
+ window.addEventListener("keydown",onSpace);}
+function end(){scr.style.fontSize="40px";scr.textContent=$END_MSG;$DOWNLOAD}
 $STARTER
 </script></body></html>""")
 
 def experiment_html(words: List[str], *, with_download=True,
                     cycle_ms=350, start_ms=14, step_ms=14, fullscreen=False) -> str:
 
-    dl_js=""
+    download_js=""
     if with_download:
-        dl_js = r"""
+        download_js=r"""
 const csv=["word;rt_ms;response",...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
 const a=document.createElement("a");
 a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-a.download="results.csv"; a.textContent="Télécharger les résultats";
-a.style.fontSize="32px"; a.style.marginTop="30px";
-document.body.appendChild(a);""".replace("$", "$$")
+a.download="results.csv";a.textContent="Télécharger les résultats";
+a.style.fontSize="32px";a.style.marginTop="30px";
+document.body.appendChild(a);""".replace("$","$$")
 
-    fs_js=""
+    starter = "nextTrial();"  # par défaut
+    fullscreen_js=""
     if fullscreen:
         starter = r"""
 scr.textContent="Appuyez sur la barre ESPACE pour commencer";
-function firstKey(e){ if(e.code==="Space"){ window.removeEventListener("keydown",firstKey);
-document.documentElement.requestFullscreen?.(); nextTrial(); }}
+function firstKey(e){if(e.code==="Space"){window.removeEventListener("keydown",firstKey);
+document.documentElement.requestFullscreen?.();nextTrial();}}
 window.addEventListener("keydown",firstKey);"""
-    else:
-        starter="nextTrial();"
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(list(words)), CYCLE=cycle_ms, START=start_ms, STEP=step_ms,
         END_MSG=json.dumps("Merci !" if with_download else "Fin de l’entraînement"),
-        DOWNLOAD=dl_js, FULLSCREEN=fs_js, STARTER=starter)
+        DOWNLOAD=download_js, FULLSCREEN=fullscreen_js, STARTER=starter)
 
 # =============================================================================
 # 5. VARIABLES DE SESSION
@@ -265,18 +262,16 @@ for k, v in {
         "stimuli":[], "tirage_df":pd.DataFrame(), "exp_started":False,
         "hz_val":None}.items():
     st.session_state.setdefault(k, v)
-p = st.session_state                      # alias court
+p = st.session_state
 
 # =============================================================================
-# 6. COMPOSANT HTML / JS : test fréquence écran
+# 6. TEST DE FRÉQUENCE D’ÉCRAN (composant HTML/JS)
 # =============================================================================
 TEST_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
-<style>html,body{height:100%;margin:0;background:#000;color:#fff;
-display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+<style>html,body{height:100%;margin:0;background:#000;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 #res{font-size:48px;margin:24px 0}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
-<h2>Test de fréquence</h2><div id="res">--</div>
-<button id="go" onclick="mesure()">Démarrer</button>
+<h2>Test de fréquence</h2><div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
 <script>
 function mesure(){const r=document.getElementById('res'),b=document.getElementById('go');
 b.disabled=true;r.textContent='Mesure…';r.style.color='#fff';let f=0,t0=performance.now();
@@ -290,7 +285,7 @@ Streamlit.setComponentReady();
 COMMERCIAL=[60,75,90,120,144]
 def nearest_hz(x:float)->int: return min(COMMERCIAL,key=lambda v:abs(v-x))
 
-def go(page:str): p.page=page; do_rerun()
+def go(page:str)->None: p.page=page; do_rerun()
 
 # =============================================================================
 # 7. PAGES STREAMLIT
@@ -336,7 +331,8 @@ Déroulement : 2 essais d’entraînement puis 80 essais de test.
 
     elif p.tirage_run and not p.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
-            df=build_sheet(); mots=df["ortho"].tolist(); random.shuffle(mots)
+            df=build_sheet()
+            mots=df["ortho"].tolist(); random.shuffle(mots)
             p.tirage_df=df; p.stimuli=mots
             p.tirage_ok=True; p.tirage_run=False
         st.success("Tirage terminé !")
@@ -363,7 +359,7 @@ elif p.page=="fam":
 elif p.page=="exp":
     if not p.exp_started:
         st.header("Test principal : 80 mots")
-        with st.expander("Aperçu (premières lignes) du tirage aléatoire :"):
+        with st.expander("Aperçu (5 premières lignes) du tirage :"):
             st.dataframe(p.tirage_df.head())
         if st.button("Commencer le test (plein écran)"):
             p.exp_started=True; do_rerun()
