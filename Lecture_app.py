@@ -2,10 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
-• Test de fréquence (rAF)
-• Choix 60 Hz / 120 Hz / autre
-• Croix de fixation 500 ms avant chaque mot
-• Présentation pilotée par requestAnimationFrame
+• Test de fréquence (rAF)                           • Choix 60 Hz / 120 Hz / autre
+• Croix de fixation 500 ms avant chaque mot         • Présentation pilotée par rAF
 """
 
 from __future__ import annotations
@@ -51,7 +49,7 @@ SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
 # ────────────────────────── petits outils ────────────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
-        s.astype(str).str.replace(r"[ ,\xa0]", "", regex=True).str.replace(",", "."),
+        s.astype(str).str.replace(r"[ \xa0]", "", regex=True).str.replace(",", "."),
         errors="coerce",
     )
 
@@ -62,24 +60,18 @@ def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in ta
 
 def nearest_hz(x: float) -> int:
     """
-    Arrondit la valeur mesurée `x` (Hz) en fonction des intervalles souhaités.
+    Arrondit la valeur mesurée `x` (Hz) selon les plages souhaitées.
 
-      28–32   → 30 Hz
-      58–62   → 60 Hz
-      73–78   → 75 Hz
-      88–92   → 90 Hz
-      83–97   → 85 Hz
-      98–102  → 100 Hz
-      118–122 → 120 Hz
-      142–146 → 144 Hz
-
-    Si la valeur ne correspond à aucun intervalle, on renvoie l'arrondi le plus proche.
+    28–32   → 30 Hz        58–62   → 60 Hz
+    73–78   → 75 Hz        88–92   → 90 Hz
+    83–97   → 85 Hz        98–102  → 100 Hz
+    118–122 → 120 Hz       142–146 → 144 Hz
     """
     ranges = [
         (28,  32,  30),
         (58,  62,  60),
         (73,  78,  75),
-        (88,  92,  90),  # doit précéder 83–97 pour éviter le chevauchement
+        (88,  92,  90),   # doit précéder 83–97
         (83,  97,  85),
         (98, 102, 100),
         (118, 122, 120),
@@ -90,7 +82,7 @@ def nearest_hz(x: float) -> int:
             return val
     return round(x)
 
-# ────── 1. lecture de Lexique.xlsx (identique) ───────────────────────────
+# ────── 1. lecture de Lexique.xlsx ───────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
@@ -126,7 +118,7 @@ def load_sheets() -> Dict[str, Dict]:
     feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
 
-# ────── 2. tirage des 80 mots (algorithme inchangé) ──────────────────────
+# ────── 2. tirage des 80 mots ────────────────────────────────────────────
 def masks(df, st_): return dict(
     LOW_OLD = df.old20 < st_["m_old20"],
     HIGH_OLD= df.old20 > st_["m_old20"],
@@ -272,9 +264,9 @@ $STARTER
 def experiment_html(words: List[str], hz: int,
                     with_download=True, fullscreen=False) -> str:
     frame  = 1000 / hz
-    cycle_f= int(round(CYCLE_MS  / frame))      # 21 f @60 Hz ; 42 f @120 Hz
-    cross_f= int(round(CROSS_MS / frame))       # 30 f @60 Hz ; 60 f @120 Hz
-    scale  = hz // 60                           # 1 pour 60 Hz ; 2 pour 120 Hz
+    cycle_f= int(round(CYCLE_MS  / frame))   # 21 f @60 Hz ; 42 f @120 Hz
+    cross_f= int(round(CROSS_MS / frame))    # 30 f @60 Hz ; 60 f @120 Hz
+    scale  = hz // 60                        # 1 à 60 Hz ; 2 à 120 Hz
     start_f= 1 * scale
     step_f = 1 * scale
 
@@ -312,11 +304,22 @@ display:flex;flex-direction:column;align-items:center;justify-content:center;tex
 #res{font-size:48px;margin:24px}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
 <h2>Test de fréquence</h2><div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
 <script>
-function mesure(){const r=document.getElementById('res'),b=document.getElementById('go');
-b.disabled=true;r.textContent='Mesure…';let f=0,t0=performance.now();
-function loop(){f++;if(f<120){requestAnimationFrame(loop);}else{
-const hz=f*1000/(performance.now()-t0);r.textContent='≈ '+hz.toFixed(1)+' Hz';
-Streamlit.setComponentValue(hz.toFixed(1));b.disabled=false;}}requestAnimationFrame(loop);}
+function mesure(){
+  const r=document.getElementById('res'),b=document.getElementById('go');
+  b.disabled=true;r.textContent='Mesure…';
+  let f=0,t0=performance.now();
+  function loop(){
+    f++;
+    if(f<120){ requestAnimationFrame(loop); }
+    else{
+      const hz=f*1000/(performance.now()-t0);
+      r.textContent='≈ '+hz.toFixed(1)+' Hz';
+      Streamlit.setComponentValue(hz.toFixed(1));
+      b.disabled=false;
+    }
+  }
+  requestAnimationFrame(loop);
+}
 Streamlit.setComponentReady();
 </script></body></html>"""
 
