@@ -225,7 +225,7 @@ function buildVK(){
   const rows=[
     "QWERTZUIOP",
     "ASDFGHJKL",
-    "ÉÈYXCVBNMÉÈÏÇ",
+    "YXCVBNMÉÈÇÏ",
     "←↵"
   ];
   rows.forEach(r=>{
