@@ -3,8 +3,8 @@
 EXPÉRIENCE 3 – Tâche de reconnaissance de mots masqués
 (familiarisation 2 mots + test principal 80 mots)
 
-Exécution : streamlit run exp3.py
-Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
+Exécution :   streamlit run exp3.py
+Dépendance :  Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
 
@@ -31,8 +31,7 @@ st.markdown(
     """
     <style>
         #MainMenu, header, footer {visibility: hidden;}
-        /* ancien spinner Streamlit */
-        .css-1d391kg {display: none;}
+        .css-1d391kg {display: none;}  /* ancien spinner */
     </style>
     """,
     unsafe_allow_html=True,
@@ -41,100 +40,97 @@ st.markdown(
 # =============================================================================
 # 1. PARAMÈTRES DU TIRAGE
 # =============================================================================
-MEAN_FACTOR_OLDPLD = 0.45
-MEAN_DELTA         = {"letters": 0.68, "phons": 0.68}
-SD_MULT            = {"letters": 2.0, "phons": 2.0,
-                      "old20": 0.28, "pld20": 0.28, "freq": 1.9}
-
 XLSX            = Path(__file__).with_name("Lexique.xlsx")
 N_PER_FEUIL_TAG = 5
 TAGS            = ("LOW_OLD", "HIGH_OLD", "LOW_PLD", "HIGH_PLD")
 PRACTICE_WORDS  = ["PAIN", "EAU"]
 
-NUM_BASE        = ["letters", "phons", "old20", "pld20"]
-FREQ_COLS       = ["freqfilms2", "freqwikis2"]      # seront détectées à l’ouverture
+MANDATORY_COLS  = ["ortho", "old20", "pld20"]           # indispensables
+OPTIONAL_COLS   = ["letters", "phons", "freqfilms2", "freqwikis2"]
 
 # =============================================================================
 # 2. OUTILS DIVERS
 # =============================================================================
 def to_float(s: pd.Series) -> pd.Series:
-    """Convertit en float, gère les virgules éventuelles."""
+    """Convertit une série en float, en gérant les virgules éventuelles."""
     return pd.to_numeric(s.astype(str).str.replace(",", ".", regex=False), errors="coerce")
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     """Retourne un DataFrame mélangé (index remis)."""
     return df.sample(frac=1, random_state=random.randint(0, 2**32 - 1)).reset_index(drop=True)
 
-def cat_code(tag: str) -> int:   # utilisé pour les statistiques optionnelles
-    return -1 if "LOW" in tag else 1
-
 # =============================================================================
 # 3. CHARGEMENT EXCEL + TIRAGE DES 80 MOTS
 # =============================================================================
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, pd.DataFrame]:
-    """Charge les 4 feuilles ‘Feuil…’ et effectue le pré-traitement."""
+    """Charge les 4 feuilles ‘Feuil*’ en étant tolérant sur les colonnes."""
     if not XLSX.exists():
         st.error(f"Fichier « {XLSX.name} » introuvable."); st.stop()
 
     xls          = pd.ExcelFile(XLSX)
     sheet_names  = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheet_names) != 4:
-        st.error("Le classeur doit contenir exactement 4 feuilles nommées Feuil1…Feuil4.")
+        st.error("Le classeur doit contenir exactement 4 feuilles Feuil1…Feuil4.")
         st.stop()
 
     sheets = {}
     for name in sheet_names:
         df = pd.read_excel(xls, sheet_name=name)
-        df.columns = df.columns.str.lower()          # homogénéiser
+        df.columns = df.columns.str.lower()
+
+        # Vérification des colonnes indispensables
+        missing = [c for c in MANDATORY_COLS if c not in df.columns]
+        if missing:
+            st.error(
+                f"Feuille « {name} » : colonne(s) manquante(s) {missing}. "
+                "Merci de compléter votre fichier Excel."
+            )
+            st.stop()
 
         # Conversion numérique
-        for col in NUM_BASE + FREQ_COLS:
+        for col in MANDATORY_COLS + OPTIONAL_COLS:
             if col in df.columns:
                 df[col] = to_float(df[col])
 
-        # Catégories OLD / PLD (médiane par feuille)
-        df["old_cat"] = np.where(df["old20"]  <= df["old20"].median(),  "LOW_OLD",  "HIGH_OLD")
+        # Création des catégories LOW / HIGH sur la médiane
+        df["old_cat"] = np.where(df["old20"] <= df["old20"].median(), "LOW_OLD", "HIGH_OLD")
         df["pld_cat"] = np.where(df["pld20"] <= df["pld20"].median(), "LOW_PLD", "HIGH_PLD")
         df["group"]   = name
         df["source"]  = name
 
-        # On ne garde que les colonnes utiles
-        keep = ["ortho"] + NUM_BASE + FREQ_COLS + ["source", "group", "old_cat", "pld_cat"]
+        keep = (
+            MANDATORY_COLS +
+            [c for c in OPTIONAL_COLS if c in df.columns] +
+            ["source", "group", "old_cat", "pld_cat"]
+        )
         sheets[name] = df[keep].dropna(subset=["ortho"])
+
     return sheets
 
 @st.cache_data(show_spinner=False)
 def build_sheet() -> pd.DataFrame:
     """Construit la liste finale de 80 mots (5 mots × 4 feuilles × 4 catégories)."""
     sheets = load_sheets()
-    for _ in range(1_000):                    # 1000 tentatives au maximum
+    for _ in range(1_000):                          # 1000 tentatives max
         parts = []
         ok = True
         for tag in TAGS:
             for name, df in sheets.items():
-                if "OLD" in tag:
-                    subset = df[df["old_cat"] == tag]
-                else:
-                    subset = df[df["pld_cat"] == tag]
+                subset = df[df["old_cat" if "OLD" in tag else "pld_cat"] == tag]
                 if len(subset) < N_PER_FEUIL_TAG:
                     ok = False; break
                 parts.append(subset.sample(N_PER_FEUIL_TAG))
             if not ok:
                 break
         if ok:
-            df_all = shuffled(pd.concat(parts, ignore_index=True))
-            return df_all
+            return shuffled(pd.concat(parts, ignore_index=True))
+
     st.error("Impossible de générer la liste (contraintes trop strictes)."); st.stop()
 
 # =============================================================================
-# 4. PAGE HTML / JS (calibrée 60 Hz)
+# 4. TEMPLATE HTML / JS (calibré 60 Hz)
 # =============================================================================
-CROSS_FR   = 30   # 500 ms à 60 Hz
-SHOW_START = 1    # 1 frame  ≈ 16,7 ms
-STEP_FR    = 1
-CYCLE_FR   = 20   # mot + masque = 20 frames ≈ 333 ms
-
 HTML_TPL = Template(r"""
 <!DOCTYPE html>
 <html lang="fr">
@@ -150,21 +146,20 @@ body{background:#000;color:#FFF;font-family:Arial,Helvetica,sans-serif;font-size
 <div id="scr"></div>
 <input id="ans" autocomplete="off"/>
 <script>
-/* ===================== PARAMÈTRES INSÉRÉS VIA PYTHON ===================== */
-const WORDS = $WORDS;
-const CYCLE_MS = $CYCLE_MS;
-const START_MS = $START_MS;
-const STEP_MS  = $STEP_MS;
-const CROSS_MS = $CROSS_MS;
-/* ======================================================================== */
+/* ============= paramètres injectés par Streamlit ============= */
+const WORDS     = $WORDS;
+const CYCLE_MS  = $CYCLE_MS;
+const START_MS  = $START_MS;
+const STEP_MS   = $STEP_MS;
+const CROSS_MS  = $CROSS_MS;
+/* =============================================================== */
 
 let trial = 0;
 let results = [];
-
 const scr = document.getElementById("scr");
 const ans = document.getElementById("ans");
 
-/* --------------- 1. Mesure de la fréquence écran (~60 Hz) --------------- */
+/* ---------- 1. Mesure de la fréquence écran (~60 Hz) ---------- */
 function estimateFPS(samples=120){
   return new Promise(ok=>{
     let t=[];
@@ -181,7 +176,7 @@ function estimateFPS(samples=120){
   });
 }
 
-/* ----------------------- 2. Lancement général --------------------------- */
+/* ------------------ 2. Lancement général ---------------------- */
 function init(){
   estimateFPS().then(fps=>{
     if(fps>55 && fps<65){ startExperiment(); }
@@ -196,28 +191,27 @@ function init(){
   });
 }
 
-/* --------------------------- 3. Expérience ------------------------------ */
+/* ------------------------ 3. Expérience ----------------------- */
 function nextTrial(){
-  if(trial >= WORDS.length){ return endExperiment(); }
+  if(trial>=WORDS.length){ return endExperiment(); }
 
   /* Croix de fixation */
-  scr.textContent = "+";
+  scr.textContent="+";
   setTimeout(()=>runWordTrial(WORDS[trial]), CROSS_MS);
 }
 
 function runWordTrial(word){
-  const mask = "#".repeat(word.length);
-  let showDur = START_MS;
-  let hideDur = CYCLE_MS - showDur;
-  let active  = true;
-  const t0 = performance.now();
+  const mask="#".repeat(word.length);
+  let showDur=START_MS;
+  let hideDur=CYCLE_MS-showDur;
+  let active=true;
+  const t0=performance.now();
 
-  /* Boucle mot/masque */
   function loop(){
     if(!active) return;
-    scr.textContent = word;
+    scr.textContent=word;
     setTimeout(()=>{
-      scr.textContent = mask;
+      scr.textContent=mask;
       setTimeout(()=>{
         showDur += STEP_MS;
         hideDur = Math.max(0, CYCLE_MS - showDur);
@@ -227,44 +221,41 @@ function runWordTrial(word){
   }
   loop();
 
-  /* Réponse clavier (ESPACE) */
   function onSpace(e){
     if(e.code==="Space" && active){
-      active = false;
-      window.removeEventListener("keydown", onSpace);
-      const rt = Math.round(performance.now() - t0);
-      scr.textContent = "";
-      ans.style.display = "block"; ans.value = ""; ans.focus();
+      active=false;
+      window.removeEventListener("keydown",onSpace);
+      const rt=Math.round(performance.now()-t0);
+      scr.textContent="";
+      ans.style.display="block"; ans.value=""; ans.focus();
 
-      ans.addEventListener("keydown", function onEnter(ev){
+      ans.addEventListener("keydown",function onEnter(ev){
         if(ev.key==="Enter"){
           ev.preventDefault();
-          results.push({word, rt_ms: rt, response: ans.value.trim()});
-          ans.removeEventListener("keydown", onEnter);
-          ans.style.display = "none";
-          trial += 1;
-          nextTrial();
+          results.push({word,rt_ms:rt,response:ans.value.trim()});
+          ans.removeEventListener("keydown",onEnter);
+          ans.style.display="none";
+          trial++; nextTrial();
         }
       });
     }
   }
-  window.addEventListener("keydown", onSpace);
+  window.addEventListener("keydown",onSpace);
 }
 
-/* ------------------------- 4. Fin d’expérience -------------------------- */
+/* ---------------------- 4. Fin d’expérience ------------------- */
 function endExperiment(){
-  scr.style.fontSize = "40px";
-  scr.textContent = "Merci !";
+  scr.style.fontSize="40px";
+  scr.textContent="Merci !";
 
-  /* Génération CSV téléchargeable */
-  const csv = ["word;rt_ms;response",
-               ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download = "results.csv";
-  a.textContent = "Télécharger les résultats";
-  a.style.fontSize = "32px";
-  a.style.marginTop = "30px";
+  const csv=["word;rt_ms;response",
+             ...results.map(r=>`${r.word};${r.rt_ms};${r.response}`)].join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download="results.csv";
+  a.textContent="Télécharger les résultats";
+  a.style.fontSize="32px";
+  a.style.marginTop="30px";
   document.body.appendChild(a);
 }
 
@@ -276,12 +267,11 @@ init();
 """)
 
 def experiment_html(words: list[str],
-                    with_download: bool = True,
                     cross_ms: int = 500,
                     cycle_ms: int = 333,
                     start_ms: int = 17,
                     step_ms: int = 17) -> str:
-    """Fabrique la page HTML/JS de l’expérience (renvoyée à Streamlit)."""
+    """Fabrique la page HTML/JS de l’expérience."""
     return HTML_TPL.substitute(
         WORDS=json.dumps(words),
         CYCLE_MS=cycle_ms,
@@ -291,9 +281,9 @@ def experiment_html(words: list[str],
     )
 
 # =============================================================================
-# 5. NAVIGATION STREAMLIT (3 pages)
+# 5. NAVIGATION STREAMLIT
 # =============================================================================
-if "page" not in st.session_state:        st.session_state.page        = "intro"
+if "page" not in st.session_state:        st.session_state.page = "intro"
 if "tirage_en_cours" not in st.session_state: st.session_state.tirage_en_cours = False
 if "tirage_ok"      not in st.session_state: st.session_state.tirage_ok      = False
 
@@ -305,10 +295,11 @@ if st.session_state.page == "intro":
         """
 **Important**  
 Cette expérience est **strictement calibrée pour un moniteur 60 Hz**.  
-Un test automatique vérifiera la fréquence de votre écran avant de commencer.
+Un test automatique vérifiera la fréquence avant de commencer.
 
 **Principe**  
-Des mots apparaîtront très brièvement (≈ 17 ms, soit 1 trame) suivis d’un masque.
+Des mots apparaîtront très brièvement (≈ 17 ms, soit 1 trame) puis seront
+masqués par une suite de dièses.
 
 **Votre tâche**  
 • Fixez la croix **+** au centre.  
@@ -332,17 +323,15 @@ Des mots apparaîtront très brièvement (≈ 17 ms, soit 1 trame) suivis d’un
             tirage_df = build_sheet()
             mots = tirage_df["ortho"].str.upper().tolist()
             random.shuffle(mots)
-            st.session_state.tirage_df     = tirage_df
-            st.session_state.stimuli       = mots
+            st.session_state.tirage_df       = tirage_df
+            st.session_state.stimuli         = mots
             st.session_state.tirage_en_cours = False
-            st.session_state.tirage_ok     = True
+            st.session_state.tirage_ok       = True
         st.success("Tirage terminé !")
 
-    # Bouton actif si tirage OK
-    if st.session_state.tirage_ok:
-        if st.button("Commencer la familiarisation"):
-            st.session_state.page = "fam"
-            do_rerun()
+    if st.session_state.tirage_ok and st.button("Commencer la familiarisation"):
+        st.session_state.page = "fam"
+        do_rerun()
 
 # ──────────────────────── PAGE FAMILIARISATION ────────────────────────────
 elif st.session_state.page == "fam":
@@ -351,7 +340,7 @@ elif st.session_state.page == "fam":
                 "puis tapez le mot lu et validez avec **Entrée**.")
 
     components.v1.html(
-        experiment_html(PRACTICE_WORDS, with_download=False),
+        experiment_html(PRACTICE_WORDS),
         height=650, scrolling=False
     )
     st.divider()
@@ -362,10 +351,10 @@ elif st.session_state.page == "fam":
 # ────────────────────────── PAGE TEST PRINCIPAL ───────────────────────────
 elif st.session_state.page == "exp":
     st.header("Test principal (80 mots)")
-    with st.expander("Aperçu des statistiques du tirage"):
+    with st.expander("Aperçu des 5 premières lignes du tirage"):
         st.dataframe(st.session_state.tirage_df.head())
 
     components.v1.html(
-        experiment_html(st.session_state.stimuli, with_download=True),
+        experiment_html(st.session_state.stimuli),
         height=650, scrolling=False
     )
