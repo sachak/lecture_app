@@ -3,8 +3,8 @@
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
 (familiarisation + test principal ; contrôle 60/120 Hz)
 
-Exécution :   streamlit run exp3.py
-Dépendance :  Lexique.xlsx (Feuil1 … Feuil4)
+Exécution :  streamlit run exp3.py
+Dépendance : Lexique.xlsx (Feuil1 … Feuil4)
 """
 from __future__ import annotations
 
@@ -32,14 +32,14 @@ button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 
 # ───────────────── état par défaut ───────────────────────────────────────
 for k, v in dict(page="screen_test",
-                 hz_val=None,
+                 hz_val=None,          # fréquence mesurée (float) ou None
                  tirage_running=False,
                  tirage_ok=False).items():
     st.session_state.setdefault(k, v)
 p = st.session_state
 
 
-# ───────────────── constantes & fonctions tirage ─────────────────────────
+# ───────────────── constantes & fonctions de tirage ──────────────────────
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -73,14 +73,12 @@ def cat_code(tag: str) -> int:
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
     if not XLSX.exists():
-        st.error("Fichier « Lexique.xlsx » introuvable")
-        st.stop()
+        st.error("Fichier « Lexique.xlsx » introuvable"); st.stop()
 
     xls    = pd.ExcelFile(XLSX)
     sheets = [s for s in xls.sheet_names if s.lower().startswith("feuil")]
     if len(sheets) != 4:
-        st.error("Le classeur doit contenir 4 feuilles Feuil1…Feuil4")
-        st.stop()
+        st.error("Le classeur doit contenir 4 feuilles Feuil1…Feuil4"); st.stop()
 
     feuilles, all_freq_cols = {}, set()
     for sh in sheets:
@@ -92,8 +90,7 @@ def load_sheets() -> dict[str, dict]:
 
         need = ["ortho", "old20", "pld20", "nblettres", "nbphons"] + fq
         if any(c not in df.columns for c in need):
-            st.error(f"Colonnes manquantes dans {sh}")
-            st.stop()
+            st.error(f"Colonnes manquantes dans {sh}"); st.stop()
 
         for c in NUM_BASE + fq:
             df[c] = to_float(df[c])
@@ -187,12 +184,9 @@ def build_sheet() -> pd.DataFrame:
             for sh in taken:
                 sub = pick_five(tag, sh, taken[sh], F)
                 if sub is None:
-                    ok = False
-                    break
-                bloc.append(sub)
-                taken[sh].update(sub.ortho)
-            if not ok:
-                break
+                    ok = False; break
+                bloc.append(sub); taken[sh].update(sub.ortho)
+            if not ok: break
             groups.append(shuffled(pd.concat(bloc, ignore_index=True)))
 
         if ok:
@@ -201,8 +195,7 @@ def build_sheet() -> pd.DataFrame:
                     ["source", "group", "old_cat", "pld_cat"]
             return df[order]
 
-    st.error("Impossible de générer la liste.")
-    st.stop()
+    st.error("Impossible de générer la liste."); st.stop()
 
 
 # ───────────────── composant HTML / JS : test fréquence ──────────────────
@@ -239,7 +232,7 @@ Streamlit.setComponentReady();
 """
 
 
-# ───────────────── outil : arrondir à la fréquence « commerce » ───────────
+# ───────────────── outil : arrondir à la fréquence « commerce » ──────────
 COMMERCIAL = [60, 75, 90, 120, 144]
 def nearest_hz(x: float) -> int:
     return min(COMMERCIAL, key=lambda v: abs(v - x))
@@ -269,13 +262,7 @@ if p.page == "screen_test":
 
     if p.hz_val is not None:
         hz_r = nearest_hz(p.hz_val)
-        if hz_r == 60:
-            st.success("60 Hz – OK ✅")
-        else:
-            st.error("Désolé, fréquence détectée incompatible.")
-            st.write(f"Fréquence détectée ≈ **{hz_r} Hz**")
-    else:
-        st.info("Cliquez sur « Démarrer » pour lancer la mesure.")
+        st.write(f"Fréquence détectée ≈ **{hz_r} Hz**")
 
     st.divider()
 
@@ -305,14 +292,12 @@ Des mots seront affichés très brièvement puis masqués (`#####`).
 """)
 
     if not p.tirage_running and not p.tirage_ok:
-        p.tirage_running = True
-        do_rerun()
+        p.tirage_running = True; do_rerun()
 
     elif p.tirage_running and not p.tirage_ok:
         with st.spinner("Tirage aléatoire des 80 mots…"):
             df = build_sheet()
-            mots = df["ortho"].tolist()
-            random.shuffle(mots)
+            mots = df["ortho"].tolist(); random.shuffle(mots)
             p.stimuli = mots
             p.tirage_ok, p.tirage_running = True, False
         st.success("Tirage terminé !")
@@ -350,3 +335,6 @@ elif p.page == "exp":
         "display:flex;align-items:center;justify-content:center'>"
         "— Votre tâche principale ici —</div>",
         height=300, scrolling=False)
+
+else:
+    st.stop()
