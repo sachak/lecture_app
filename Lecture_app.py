@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués
-(familiarisation + test principal ; contrôle 60 Hz facultatif)
-
+(familiarisation + test principal ; contrôle 60/120 Hz)
 Exécution :   streamlit run exp3.py
 Dépendance :  Lexique.xlsx (Feuil1 … Feuil4)
 """
@@ -242,20 +241,17 @@ def go(page: str):
 if p.page == "screen_test":
     st.subheader("1. Vérification (facultative) de la fréquence d’écran")
 
-    # appel à components.html (avec ou sans key selon version)
     html_kwargs = dict(height=520, scrolling=False)
     if "key" in inspect.signature(components.html).parameters:
         html_kwargs["key"] = "hz_test"
     val = components.html(TEST_HTML, **html_kwargs)
 
-    # récupération de la valeur renvoyée
     if isinstance(val, (int, float, str)):
         try:
             p.hz_val = float(val)
         except ValueError:
-            pass  # ignore si conversion impossible
+            pass
 
-    # affichage du résultat simplifié
     if p.hz_val is not None:
         hz_r = nearest_hz(p.hz_val)
         if hz_r == 60:
@@ -268,20 +264,16 @@ if p.page == "screen_test":
 
     st.divider()
 
-    # ───────────── trois boutons « Suivant » ─────────────
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Suivant 60 Hz ➜", key="next60"):
-            p.manual_choice_hz = 60
             go("intro")
     with col2:
         if st.button("Suivant 120 Hz ➜", key="next120"):
-            p.manual_choice_hz = 120
             go("intro")
     with col3:
         if st.button("Suivant Autre Hz ➜", key="nextOther"):
-            p.manual_choice_hz = "other"
-            go("intro")
+            go("incompatible")
 
 
 # 1. — Présentation + tirage
@@ -311,6 +303,11 @@ Des mots seront affichés très brièvement puis masqués (`#####`).
     if p.tirage_ok and st.button("Commencer la familiarisation"):
         go("fam")
 
+
+# 1bis. — Écran incompatible
+elif p.page == "incompatible":
+    st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
+    st.write("Merci de ne pas poursuivre.")
 
 # 2. — Familiarisation
 elif p.page == "fam":
