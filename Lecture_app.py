@@ -226,7 +226,6 @@ function buildVK(){
     "QWERTZUIOP",
     "ASDFGHJKL",
     "YXCVBNM",
-    "ÀÂÄÇÉÈÊËÎÏÔÖÙÜ",
     "ÇÉÈÊÏÔ←↵"
   ];
   rows.forEach(r=>{
