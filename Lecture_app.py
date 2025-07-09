@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
-• Test de fréquence (rAF)                           • Choix 60 Hz / 120 Hz / autre
-• Croix de fixation 500 ms avant chaque mot         • Présentation pilotée par rAF
+• Test de fréquence (rAF) -> arrondi 30/60/75/85/90/100/120/144 Hz
+• Choix 60 Hz / 120 Hz / autre
+• Croix de fixation 500 ms avant chaque mot
+• Présentation pilotée par requestAnimationFrame
 """
 
 from __future__ import annotations
@@ -59,19 +61,12 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 
 def nearest_hz(x: float) -> int:
-    """
-    Arrondit la valeur mesurée `x` (Hz) selon les plages souhaitées.
-
-    28–32   → 30 Hz        58–62   → 60 Hz
-    73–78   → 75 Hz        88–92   → 90 Hz
-    83–97   → 85 Hz        98–102  → 100 Hz
-    118–122 → 120 Hz       142–146 → 144 Hz
-    """
+    """Arrondit la valeur mesurée `x` aux intervalles demandés."""
     ranges = [
         (28,  32,  30),
         (58,  62,  60),
         (73,  78,  75),
-        (88,  92,  90),   # doit précéder 83–97
+        (88,  92,  90),  # avant 83-97 pour prioriser 90 Hz
         (83,  97,  85),
         (98, 102, 100),
         (118, 122, 120),
@@ -194,22 +189,20 @@ html,body{height:100%;margin:0;background:#000;color:#fff;
 window.addEventListener("load",()=>document.body.focus());
 /* ---------------- paramètres insérés depuis Python ------------------- */
 const WORDS   = $WORDS;
-const START_F = $STARTF;           // 1 f @60 Hz ; 2 f @120 Hz
+const START_F = $STARTF;
 const STEP_F  = $STEPF;
-const CYCLE_F = $CYCLEF;           // ≈21 f @60 Hz ; 42 f @120 Hz
-const CROSS_F = $CROSSF;           // 30 f @60 Hz ; 60 f @120 Hz
+const CYCLE_F = $CYCLEF;
+const CROSS_F = $CROSSF;
 /* --------------------------------------------------------------------- */
 let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
 /* --------------------------------------------------------------------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
-
   const w=WORDS[trial], mask="#".repeat(w.length);
   let active=true;
 
   /* -------- 1. CROIX DE FIXATION ------------------------------------ */
-  let frame=0;
-  scr.textContent="+";
+  let frame=0; scr.textContent="+";
   function crossLoop(){
     if(!active)return;
     if(++frame>=CROSS_F){ startStimulus(); }
@@ -221,13 +214,12 @@ function nextTrial(){
   function startStimulus(){
     let showF=START_F, phase="show", f2=0;
     const t0=performance.now();
-
     function stimLoop(){
       if(!active)return;
       if(phase==="show"){
         if(f2===0) scr.textContent=w;
         if(++f2>=showF){ phase="mask"; f2=0; scr.textContent=mask; }
-      }else{                           // phase masque
+      }else{
         const hideF=Math.max(0,CYCLE_F-showF);
         if(++f2>=hideF){
           showF=Math.min(showF+STEP_F,CYCLE_F);
@@ -238,7 +230,7 @@ function nextTrial(){
     }
     requestAnimationFrame(stimLoop);
 
-    /* ------ Gestion de la réponse ----------------------------------- */
+    /* ------ Gestion réponse ----------------------------------------- */
     function onSpace(e){
       if(e.code==="Space"&&active){
         active=false; window.removeEventListener("keydown",onSpace);
@@ -264,9 +256,9 @@ $STARTER
 def experiment_html(words: List[str], hz: int,
                     with_download=True, fullscreen=False) -> str:
     frame  = 1000 / hz
-    cycle_f= int(round(CYCLE_MS  / frame))   # 21 f @60 Hz ; 42 f @120 Hz
-    cross_f= int(round(CROSS_MS / frame))    # 30 f @60 Hz ; 60 f @120 Hz
-    scale  = hz // 60                        # 1 à 60 Hz ; 2 à 120 Hz
+    cycle_f= int(round(CYCLE_MS  / frame))
+    cross_f= int(round(CROSS_MS / frame))
+    scale  = hz // 60
     start_f= 1 * scale
     step_f = 1 * scale
 
@@ -297,19 +289,36 @@ window.addEventListener("keydown",first);"""
         DOWNLOAD=dl_js, STARTER=starter)
 
 # ────── 4. composant test fréquence écran ────────────────────────────────
-TEST_HTML=r"""
+TEST_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
-<style>html,body{height:100%;margin:0;background:#000;color:#fff;
+<style>
+html,body{height:100%;margin:0;background:#000;color:#fff;
 display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
-#res{font-size:48px;margin:24px}button{font-size:22px;padding:6px 26px;margin:4px}</style></head><body>
-<h2>Test de fréquence</h2><div id="res">--</div><button id="go" onclick="mesure()">Démarrer</button>
+#res{font-size:48px;margin:24px}
+button{font-size:22px;padding:6px 26px;margin:4px}
+</style>
+<!-- Lib Streamlit chargée explicitement (UMD) -->
+<script src="https://cdn.jsdelivr.net/npm/@streamlit/component-lib@1/dist/index.umd.js"></script>
+</head><body>
+<h2>Test de fréquence</h2>
+<div id="res">--</div>
+<button id="go" onclick="mesure()">Démarrer</button>
+
 <script>
+/* annonce à Streamlit que l'iframe est prête */
+window.addEventListener("DOMContentLoaded", ()=>{
+  Streamlit.setComponentReady();
+  Streamlit.setFrameHeight(520);
+});
+
 function mesure(){
-  const r=document.getElementById('res'),b=document.getElementById('go');
-  b.disabled=true;r.textContent='Mesure…';
-  let f=0,t0=performance.now();
+  const r=document.getElementById('res');
+  const b=document.getElementById('go');
+  b.disabled=true; r.textContent='Mesure…';
+  let f=0, t0=performance.now();
+
   function loop(){
-    f++;
+    ++f;
     if(f<120){ requestAnimationFrame(loop); }
     else{
       const hz=f*1000/(performance.now()-t0);
@@ -320,7 +329,6 @@ function mesure(){
   }
   requestAnimationFrame(loop);
 }
-Streamlit.setComponentReady();
 </script></body></html>"""
 
 # ────── 5. état session ─────────────────────────────────────────────────
