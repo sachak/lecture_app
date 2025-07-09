@@ -13,28 +13,35 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+
 # ────────────────────────── utilitaire « re-run » ─────────────────────────
-def _rerun():  (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
+def _rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
 
-# ───────────────────── configuration générale (plein-écran) ──────────────
+
+# ─────────────────── configuration globale plein-écran ───────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
-st.markdown("""
-<style>
-html,body,.stApp          {height:100%; margin:0; overflow:hidden;}
-main.block-container       {padding:0;}                 /* supprime marge centre */
-#MainMenu,header,footer    {visibility:hidden;}         /* cache menu & footer  */
-button:disabled            {opacity:.45!important; cursor:not-allowed!important;}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+      html,body,.stApp      {height:100%; margin:0; overflow:hidden;}
+      main.block-container   {padding:0;}          /* supprime marge interne   */
+      #MainMenu,header,footer{visibility:hidden;}  /* masque UI Streamlit     */
+      button:disabled        {opacity:.45!important; cursor:not-allowed!important;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# ────────────────────────── état de session ──────────────────────────────
+
+# ───────────────────────────── session state ─────────────────────────────
 for k, v in dict(page="screen_test", hz_val=None,
                  tirage_running=False, tirage_ok=False).items():
     st.session_state.setdefault(k, v)
 p = st.session_state
-def go(pg:str):  p.page = pg; _rerun()
+def go(pg: str): p.page = pg; _rerun()
 
-# ────────────────── constantes & fonctions de tirage (inchangées) ────────
+
+# ─────────────── constantes & fonctions de tirage (inchangées) ───────────
 MEAN_FACTOR_OLDPLD = .45
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
@@ -46,17 +53,22 @@ MAX_TRY_TAG     = MAX_TRY_FULL = 1_000
 rng             = random.Random()
 NUM_BASE        = ["nblettres", "nbphons", "old20", "pld20"]
 
+
 def to_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
         s.astype(str)
-         .str.replace(r"[  ,]", "", regex=True)     # espaces insécables etc.
+         .str.replace(r"[  ,]", "", regex=True)   # supprime espace insécable
          .str.replace(",", ".", regex=False),
-        errors="coerce")
+        errors="coerce",
+    )
+
 
 def shuffled(df: pd.DataFrame) -> pd.DataFrame:
     return df.sample(frac=1, random_state=rng.randint(0, 1_000_000)).reset_index(drop=True)
 
-def cat_code(tag:str) -> int:  return -1 if "LOW" in tag else 1
+
+def cat_code(tag: str) -> int: return -1 if "LOW" in tag else 1
+
 
 @st.cache_data(show_spinner=False)
 def load_sheets() -> dict[str, dict]:
@@ -85,7 +97,7 @@ def load_sheets() -> dict[str, dict]:
             df[c] = to_float(df[c])
 
         df["ortho"] = df["ortho"].astype(str).str.upper()
-        df          = df.dropna(subset=need).reset_index(drop=True)
+        df = df.dropna(subset=need).reset_index(drop=True)
 
         stats = {f"m_{c}": df[c].mean() for c in
                  ("old20", "pld20", "nblettres", "nbphons")}
@@ -97,12 +109,15 @@ def load_sheets() -> dict[str, dict]:
     feuilles["all_freq_cols"] = sorted(all_freq_cols)
     return feuilles
 
+
 def masks(df, st_) -> dict[str, pd.Series]:
     return dict(
         LOW_OLD  = df.old20 < st_["m_old20"] - st_["sd_old20"],
         HIGH_OLD = df.old20 > st_["m_old20"] + st_["sd_old20"],
         LOW_PLD  = df.pld20 < st_["m_pld20"] - st_["sd_pld20"],
-        HIGH_PLD = df.pld20 > st_["m_pld20"] + st_["sd_pld20"])
+        HIGH_PLD = df.pld20 > st_["m_pld20"] + st_["sd_pld20"],
+    )
+
 
 def sd_ok(sub, st_, fq) -> bool:
     return (
@@ -110,14 +125,18 @@ def sd_ok(sub, st_, fq) -> bool:
         sub.nbphons.std(ddof=0)   <= st_["sd_nbphons"]   * SD_MULT["phons"]   and
         sub.old20.std(ddof=0)     <= st_["sd_old20"]     * SD_MULT["old20"]   and
         sub.pld20.std(ddof=0)     <= st_["sd_pld20"]     * SD_MULT["pld20"]   and
-        all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq))
+        all(sub[c].std(ddof=0) <= st_[f"sd_{c}"] * SD_MULT["freq"] for c in fq)
+    )
+
 
 def mean_lp_ok(s, st_) -> bool:
     return (
         abs(s.nblettres.mean() - st_["m_nblettres"])
             <= MEAN_DELTA["letters"] * st_["sd_nblettres"] and
         abs(s.nbphons.mean()  - st_["m_nbphons"])
-            <= MEAN_DELTA["phons"]   * st_["sd_nbphons"])
+            <= MEAN_DELTA["phons"]   * st_["sd_nbphons"]
+    )
+
 
 def pick_five(tag, feuille, used, F):
     df, st_ = F[feuille]["df"], F[feuille]["stats"]
@@ -128,9 +147,9 @@ def pick_five(tag, feuille, used, F):
         return None
 
     for _ in range(MAX_TRY_TAG):
-        samp = pool.sample(N_PER_FEUIL_TAG,
-                           random_state=rng.randint(0, 1_000_000)).copy()
+        samp = pool.sample(N_PER_FEUIL_TAG, random_state=rng.randint(0, 1_000_000)).copy()
 
+        # contraintes moyennes
         if tag == "LOW_OLD"  and samp.old20.mean() >= st_["m_old20"] - MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "HIGH_OLD" and samp.old20.mean() <= st_["m_old20"] + MEAN_FACTOR_OLDPLD*st_["sd_old20"]:  continue
         if tag == "LOW_PLD"  and samp.pld20.mean() >= st_["m_pld20"] - MEAN_FACTOR_OLDPLD*st_["sd_pld20"]:  continue
@@ -143,6 +162,7 @@ def pick_five(tag, feuille, used, F):
         samp["pld_cat"] = cat_code(tag) if "PLD" in tag else 0
         return samp
     return None
+
 
 def build_sheet() -> pd.DataFrame:
     F        = load_sheets()
@@ -169,95 +189,125 @@ def build_sheet() -> pd.DataFrame:
 
     st.error("Impossible de générer la liste."); st.stop()
 
-# ────────────────────────── composant HTML plein-écran ───────────────────
-def full_html(body:str, *, key:str|None=None, height:int=200):
+
+# ───────────────────── composant HTML plein-écran ────────────────────────
+def full_html(body: str, *, key: str | None = None, height: int = 200):
     """
-    Place un composant HTML occupant 100 % de la fenêtre.
-    Ajoute key uniquement si la version de Streamlit l'accepte.
+    Injecte un composant HTML occupant 100 % de la hauteur de fenêtre.
+    key est passé uniquement si la version de Streamlit accepte ce paramètre.
     """
-    html_doc = f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
+    html_doc = f"""
+    <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
     <style>html,body{{height:100%;margin:0;overflow:hidden;}}</style></head>
     <body>{body}
-    <script>
-      function resize(){{Streamlit.setFrameHeight(window.innerHeight);}}
-      window.addEventListener("load",resize);
-      window.addEventListener("resize",resize);
-      Streamlit.setComponentReady();
-    </script></body></html>"""
-
+      <script>
+        function resize(){{Streamlit.setFrameHeight(window.innerHeight);}}
+        window.addEventListener("load",resize);
+        window.addEventListener("resize",resize);
+        Streamlit.setComponentReady();
+      </script>
+    </body></html>"""
     kwargs = dict(height=height, scrolling=False)
     if key and "key" in inspect.signature(components.html).parameters:
         kwargs["key"] = key
     return components.html(html_doc, **kwargs)
 
-# ────────────────────────── test fréquence (HTML) ────────────────────────
-TEST_HTML_BODY = r"""
-<h2 style="font-size:6vw;margin:0 0 2vh">Test de fréquence</h2>
-<div id="res" style="font-size:8vw;margin:4vh 0">--</div>
-<button id="go"  style="font-size:4vw;padding:1vh 4vw" onclick="mesure()">Démarrer</button>
-<button id="next" style="display:none;font-size:4vw;padding:1vh 4vw;margin-top:2vh"
-        onclick="next()">Suivant ➜</button>
-<script>
-let hzVal=null;
-function mesure(){
-  const res=document.getElementById('res'), go=document.getElementById('go');
-  go.disabled=true; res.textContent='Mesure en cours…'; res.style.color='#fff';
-  let f=0,t0=performance.now();
-  function loop(){
-    f++; if(f<120){requestAnimationFrame(loop);}
-    else{
-      const hz=f*1000/(performance.now()-t0);
-      hzVal=hz.toFixed(1);
-      const good=Math.abs(hz-60)<1.5;
-      res.textContent='≈ '+hzVal+' Hz';
-      res.style.color = good?'lime':'red';
-      document.getElementById('next').style.display = good?'inline-block':'none';
-      Streamlit.setComponentValue(hzVal);
-      go.disabled=false;
-    }}
-  requestAnimationFrame(loop);
-}
-function next(){ Streamlit.setComponentValue('NEXT'); }
-</script>"""
 
-COMMERCIAL = [60, 75, 90, 120, 144]
-def nearest_hz(x: float) -> int: return min(COMMERCIAL, key=lambda v:abs(v-x))
-
-# ─────────────────────────────── PAGES ───────────────────────────────────
-# 0 — Test fréquence
+# ─────────────────────── page 0 : test de fréquence ──────────────────────
 if p.page == "screen_test":
 
-    st.markdown("## 1. Vérification (facultative) de la fréquence d’écran",
-                unsafe_allow_html=True)
+    SCREEN_TEST_HTML = r"""
+    <div style="height:100%;display:flex;flex-direction:column;
+                justify-content:center;align-items:center;text-align:center;
+                font-family:sans-serif;padding:0 4vw;box-sizing:border-box">
 
-    val = full_html(TEST_HTML_BODY, key="hz_test")
+      <h1 style="margin:0 0 5vh;font-weight:700;
+                 font-size:clamp(20px,4vw,40px)">
+        1.&nbsp;Vérification (facultative) de la fréquence d’écran
+      </h1>
+
+      <h2 style="margin:0 0 3vh;font-weight:700;
+                 font-size:clamp(32px,10vw,96px)">Test&nbsp;de&nbsp;fréquence</h2>
+
+      <div id="res" style="font-size:clamp(24px,8vw,80px);margin:2vh 0">--</div>
+
+      <div style="display:flex;gap:2vw;flex-wrap:wrap;justify-content:center">
+        <button id="go"  onclick="mesure()"
+                style="font-size:clamp(16px,4vw,32px);
+                       padding:1vh 4vw;border-radius:8px">Démarrer</button>
+
+        <button id="next" onclick="next()"
+                style="display:none;font-size:clamp(16px,4vw,32px);
+                       padding:1vh 4vw;border-radius:8px">Suivant&nbsp;➜</button>
+      </div>
+    </div>
+
+    <script>
+    let hzVal=null;
+    function mesure(){
+      const res=document.getElementById('res'), go=document.getElementById('go');
+      go.disabled=true; res.textContent='Mesure en cours…'; res.style.color='#fff';
+      let f=0,t0=performance.now();
+      function loop(){
+        f++; if(f<120){requestAnimationFrame(loop);}
+        else{
+          const hz=f*1000/(performance.now()-t0);
+          hzVal=hz.toFixed(1);
+          const ok=Math.abs(hz-60)<1.5;
+          res.textContent='≈ '+hzVal+' Hz';
+          res.style.color = ok?'lime':'red';
+          document.getElementById('next').style.display = ok?'inline-block':'none';
+          Streamlit.setComponentValue(hzVal);
+          go.disabled=false;
+        }}
+      requestAnimationFrame(loop);
+    }
+    function next(){ Streamlit.setComponentValue('NEXT'); }
+    </script>
+    """
+
+    val = full_html(SCREEN_TEST_HTML, key="hz_test")
+
+    COMMERCIAL = [60, 75, 90, 120, 144]
+    def nearest_hz(x: float) -> int: return min(COMMERCIAL, key=lambda v: abs(v-x))
 
     if isinstance(val, str) and val == "NEXT":
         if p.hz_val is None or nearest_hz(p.hz_val) != 60:
-            st.error("Fréquence non compatible : impossible de poursuivre.")
+            st.error("Fréquence non compatible ; impossible de poursuivre.")
         else:
             go("intro")
 
     elif isinstance(val, (int, float, str)):
-        try:  p.hz_val = float(val)
-        except ValueError:  pass
+        try: p.hz_val = float(val)
+        except ValueError: pass
 
-# 1 — Présentation + tirage
+
+# ───────────────────── page 1 : présentation + tirage ────────────────────
 elif p.page == "intro":
 
-    st.markdown("""
-<div style='height:100%;display:flex;flex-direction:column;
-            align-items:center;justify-content:center;text-align:center'>
-  <h2>2. Présentation de la tâche</h2>
-  <p style='max-width:600px;font-size:1.4rem'>
-  Des mots seront affichés très brièvement puis masqués (<code>#####</code>).<br>
-  • Fixez le centre de l’écran.<br>
-  • Dès que vous reconnaissez un mot, appuyez sur <b>ESPACE</b>.<br>
-  • Tapez ensuite le mot puis <b>Entrée</b>.<br><br>
-  Étapes : 1)&nbsp;Entraînement (2 mots) 2)&nbsp;Test principal (80 mots)
-  </p>
-</div>""", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style='height:100%;display:flex;flex-direction:column;
+                    align-items:center;justify-content:center;text-align:center;
+                    padding:0 4vw;box-sizing:border-box'>
+          <h2 style='font-size:clamp(22px,5vw,42px);margin:0 0 3vh'>
+             2. Présentation de la tâche
+          </h2>
+          <p style='max-width:650px;font-size:clamp(16px,4vw,26px);
+                    line-height:1.35;margin:0'>
+            Des mots seront affichés très brièvement puis masqués
+            (<code>#####</code>).<br>
+            • Fixez le centre de l’écran.<br>
+            • Dès que vous reconnaissez un mot, appuyez sur <b>ESPACE</b>.<br>
+            • Tapez ensuite le mot puis <b>Entrée</b>.<br><br>
+            Étapes&nbsp;: 1)&nbsp;Entraînement&nbsp;(2&nbsp;mots)&emsp;2)&nbsp;Test&nbsp;principal&nbsp;(80&nbsp;mots)
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    # tirage des stimuli
     if not p.tirage_running and not p.tirage_ok:
         p.tirage_running = True; _rerun()
 
@@ -273,32 +323,55 @@ elif p.page == "intro":
                                  use_container_width=True):
         go("fam")
 
-# 2 — Familiarisation
-elif p.page == "fam":
-    st.markdown("<h2 style='text-align:center'>Familiarisation (2 mots)</h2>",
-                unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center;font-size:1.3rem'>"
-                "Appuyez sur <b>ESPACE</b> dès que le mot apparaît, tapez-le puis "
-                "<b>Entrée</b>.</p>", unsafe_allow_html=True)
 
-    full_html("""
-      <div style='background:#000;color:#fff;height:100%;
-                  display:flex;align-items:center;justify-content:center;
-                  font-size:3rem'>
-         — Votre tâche de familiarisation ici —
-      </div>""", key="fam")
+# ───────────────────── page 2 : familiarisation ──────────────────────────
+elif p.page == "fam":
+    st.markdown(
+        """
+        <div style='height:100%;display:flex;flex-direction:column;
+                    align-items:center;justify-content:center;text-align:center'>
+          <h2 style='font-size:clamp(22px,6vw,46px);margin:0 0 2vh'>
+              Familiarisation (2&nbsp;mots)
+          </h2>
+          <p style='font-size:clamp(16px,4vw,26px);margin:0 0 4vh'>
+             Appuyez sur <b>ESPACE</b> dès que le mot apparaît, tapez-le
+             puis <b>Entrée</b>.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    full_html(
+        """
+        <div style='background:#000;color:#fff;height:100%;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:clamp(24px,6vw,56px)'>
+          — Votre tâche de familiarisation ici —
+        </div>
+        """,
+        key="fam_task",
+    )
 
     if st.button("Passer au test principal", use_container_width=True):
         go("exp")
 
-# 3 — Test principal
-elif p.page == "exp":
-    st.markdown("<h2 style='text-align:center'>Test principal (80 mots)</h2>",
-                unsafe_allow_html=True)
 
-    full_html("""
-      <div style='background:#000;color:#fff;height:100%;
-                  display:flex;align-items:center;justify-content:center;
-                  font-size:3rem'>
-         — Votre tâche principale ici —
-      </div>""", key="exp")
+# ───────────────────── page 3 : test principal ───────────────────────────
+elif p.page == "exp":
+    st.markdown(
+        "<h2 style='text-align:center;font-size:clamp(22px,6vw,46px);"
+        "margin:0 0 2vh'>Test principal (80&nbsp;mots)</h2>",
+        unsafe_allow_html=True,
+    )
+
+    full_html(
+        """
+        <div style='background:#000;color:#fff;height:100%;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:clamp(24px,6vw,56px)'>
+          — Votre tâche principale ici —
+        </div>
+        """,
+        key="main_task",
+    )
