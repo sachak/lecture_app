@@ -186,8 +186,7 @@ def build_sheet() -> pd.DataFrame:
                 if sub is None:
                     ok = False; break
                 bloc.append(sub); taken[sh].update(sub.ortho)
-            if not ok:
-                break
+            if not ok: break
             groups.append(shuffled(pd.concat(bloc, ignore_index=True)))
 
         if ok:
@@ -337,5 +336,5 @@ elif p.page == "exp":
         "— Votre tâche principale ici —</div>",
         height=300, scrolling=False)
 
-else:
+else:   # sécurité
     st.stop()
