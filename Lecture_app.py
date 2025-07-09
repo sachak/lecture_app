@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
-• Test de fréquence (rAF)
+• Test de fréquence d’écran + mapping sur 30/60/75/85/90/100/120/144 Hz
 • Choix 60 Hz / 120 Hz / autre
 • Croix de fixation 500 ms avant chaque mot
 • Présentation pilotée par requestAnimationFrame
@@ -60,7 +60,24 @@ def shuffled(df: pd.DataFrame) -> pd.DataFrame:
 
 def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in tag else 0)
 
-def nearest_hz(x:float)->int: return min([60,75,90,120,144], key=lambda v:abs(v-x))
+# ───────── mapping fréquence mesurée → étiquette « propre » ─────────────
+def label_hz(meas: float) -> int | None:
+    """Renvoie 30, 60, 75, 85, 90, 100, 120 ou 144 selon l’intervalle,
+       None si l’on ne tombe dans aucun des créneaux demandés."""
+    ranges = [
+        (30 , 27 , 33 ),
+        (60 , 58 , 62 ),
+        (75 , 73 , 77 ),
+        (85 , 84 , 86 ),
+        (90 , 88 , 92 ),
+        (100, 98 , 102),
+        (120, 118, 122),
+        (144, 141, 146),
+    ]
+    for lbl, low, high in ranges:
+        if low <= meas <= high:
+            return lbl
+    return None
 
 # ────── 1. lecture de Lexique.xlsx (identique) ───────────────────────────
 @st.cache_data(show_spinner=False)
@@ -158,7 +175,7 @@ def build_sheet() -> pd.DataFrame:
             return df[["ortho"]+NUM_BASE+ALL+["source","group","old_cat","pld_cat"]]
     st.error("Impossible de générer la liste."); st.stop()
 
-# ────── 3. gabarit HTML (fixation + rAF) ─────────────────────────────────
+# ────── 3. gabarit HTML (croix + rAF) ────────────────────────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <style>
@@ -172,12 +189,12 @@ html,body{height:100%;margin:0;background:#000;color:#fff;
 <div id="scr"></div><input id="ans" autocomplete="off"/>
 <script>
 window.addEventListener("load",()=>document.body.focus());
-/* ---------------- paramètres insérés depuis Python ------------------- */
+/* --------------- paramètres insérés depuis Python -------------------- */
 const WORDS   = $WORDS;
 const START_F = $STARTF;           // 1 f @60 Hz ; 2 f @120 Hz
 const STEP_F  = $STEPF;
 const CYCLE_F = $CYCLEF;           // ≈21 f @60 Hz ; 42 f @120 Hz
-const CROSS_F = $CROSSF;           // 30 f @60 Hz ; 60 f @120 Hz
+const CROSSF  = $CROSSF;           // 30 f @60 Hz ; 60 f @120 Hz
 /* --------------------------------------------------------------------- */
 let trial=0,results=[],scr=document.getElementById("scr"),ans=document.getElementById("ans");
 /* --------------------------------------------------------------------- */
@@ -187,12 +204,12 @@ function nextTrial(){
   const w=WORDS[trial], mask="#".repeat(w.length);
   let active=true;
 
-  /* -------- 1. CROIX DE FIXATION ------------------------------------ */
+  /* -------- 1. CROIX DE FIXATION (500 ms) --------------------------- */
   let frame=0;
   scr.textContent="+";
   function crossLoop(){
     if(!active)return;
-    if(++frame>=CROSS_F){ startStimulus(); }
+    if(++frame>=CROSSF){ startStimulus(); }
     else{ requestAnimationFrame(crossLoop); }
   }
   requestAnimationFrame(crossLoop);
@@ -242,11 +259,11 @@ $STARTER
 </script></body></html>""")
 
 def experiment_html(words: List[str], hz: int,
-                    with_download=True, fullscreen=False) -> str:
+                    *, with_download=True, fullscreen=False) -> str:
     frame  = 1000 / hz
-    cycle_f= int(round(CYCLE_MS  / frame))      # 21 f @60 Hz ; 42 f @120 Hz
-    cross_f= int(round(CROSS_MS / frame))       # 30 f @60 Hz ; 60 f @120 Hz
-    scale  = hz // 60                           # 1 pour 60 Hz ; 2 pour 120 Hz
+    cycle_f= int(round(CYCLE_MS / frame))        # 21 f @60 Hz ; 42 f @120 Hz
+    cross_f= int(round(CROSS_MS / frame))        # 30 f @60 Hz ; 60 f @120 Hz
+    scale  = hz // 60                            # 1 pour 60 ; 2 pour 120
     start_f= 1 * scale
     step_f = 1 * scale
 
@@ -311,7 +328,11 @@ if p.page=="screen_test":
         try: p.hz_val=float(val)
         except ValueError: pass
     if p.hz_val is not None:
-        st.write(f"Fréquence détectée ≈ **{nearest_hz(p.hz_val):d} Hz**")
+        lbl=label_hz(p.hz_val)
+        if lbl is None:
+            st.write(f"Fréquence détectée : **{p.hz_val:.1f} Hz** (hors créneaux)")
+        else:
+            st.write(f"Fréquence détectée ≈ **{lbl} Hz**")
     st.divider()
     c1,c2,c3=st.columns(3)
     with c1:
