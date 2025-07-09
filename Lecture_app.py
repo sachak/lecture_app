@@ -1,11 +1,12 @@
 # ─── exp3_frame.py ───────────────────────────────────────────────────────
 # -*- coding: utf-8 -*-
 """
-EXPÉRIENCE 3 – Reconnaissance de mots masqués (frame-accurate)
+EXPÉRIENCE 3 – Reconnaissance de mots masqués
 • Test de fréquence (requestAnimationFrame)
-• Gestion 60 Hz / 120 Hz
+• 60 Hz / 120 Hz
 • Croix de fixation 500 ms
-• Affichage entièrement responsive (centré + police auto-scalée)
+• Affichage responsive (TV, PC, mobile, tablette)
+• Sur mobile : TAP à la place de la barre ESPACE
 """
 from __future__ import annotations
 import inspect, json, random
@@ -17,8 +18,10 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+
 # ──────────────────── utilitaire de rerun ────────────────────────────────
 def do_rerun(): (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
+
 
 # ─────────────────── configuration Streamlit ─────────────────────────────
 st.set_page_config(page_title="Expérience 3", layout="wide")
@@ -27,6 +30,7 @@ st.markdown("""
 #MainMenu, header, footer{visibility:hidden;}
 button:disabled{opacity:.45!important;cursor:not-allowed!important;}
 </style>""", unsafe_allow_html=True)
+
 
 # ─────────────────────────── constantes ──────────────────────────────────
 XLSX               = Path(__file__).with_name("Lexique.xlsx")
@@ -39,11 +43,12 @@ NUM_BASE           = ["nblettres", "nbphons", "old20", "pld20"]
 PRACTICE_WORDS     = ["PAIN", "EAU"]
 
 CYCLE_MS           = 350     # mot + masque
-CROSS_MS           = 500     # croix fixation
+CROSS_MS           = 500     # croix
 
 MEAN_FACTOR_OLDPLD = .35
 MEAN_DELTA         = dict(letters=.68, phons=.68)
 SD_MULT            = dict(letters=2, phons=2, old20=.28, pld20=.28, freq=1.9)
+
 
 # ────────────────────────── petits outils ───────────────────────────────
 def to_float(s: pd.Series) -> pd.Series:
@@ -59,7 +64,8 @@ def cat_code(tag: str) -> int: return -1 if "LOW" in tag else (1 if "HIGH" in ta
 
 def nearest_hz(x: float) -> int: return min([60, 75, 90, 120, 144], key=lambda v: abs(v - x))
 
-# ────── 1. lecture Workbook ─────────────────────────────────────────────
+
+# ────── 1. lecture du classeur Excel ────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def load_sheets() -> Dict[str, Dict]:
     if not XLSX.exists():
@@ -93,6 +99,7 @@ def load_sheets() -> Dict[str, Dict]:
 
     feuilles["all_freq_cols"] = sorted(all_freq)
     return feuilles
+
 
 # ────── 2. tirage aléatoire des 80 mots ─────────────────────────────────
 def masks(df, st_): return dict(
@@ -156,7 +163,8 @@ def build_sheet() -> pd.DataFrame:
             return df[["ortho"] + NUM_BASE + all_freq + ["source", "group", "old_cat", "pld_cat"]]
     st.error("Impossible de générer la liste."); st.stop()
 
-# ────── 3. gabarit HTML RESPONSIVE ──────────────────────────────────────
+
+# ────── 3. gabarit HTML RESPONSIVE + MOBILE TAP ─────────────────────────
 HTML_TPL = Template(r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=0"/>
@@ -195,6 +203,7 @@ const WORDS=$WORDS;
 const START_F=$STARTF,STEP_F=$STEPF,CYCLE_F=$CYCLEF,CROSS_F=$CROSSF;
 /* --------------------------------------------------------------------- */
 let trial=0,results=[],scr=document.getElementById('scr'),ans=document.getElementById('ans');
+/* --------------------------------------------------------------------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
   const w=WORDS[trial],mask="#".repeat(w.length);let active=true;
@@ -203,6 +212,7 @@ function nextTrial(){
   function crossLoop(){if(!active)return;
     if(++frame>=CROSS_F)startStimulus();else requestAnimationFrame(crossLoop);}
   requestAnimationFrame(crossLoop);
+
   /* -- mot + masque -- */
   function startStimulus(){
     let showF=START_F,phase="show",f2=0;
@@ -219,41 +229,48 @@ function nextTrial(){
       requestAnimationFrame(stimLoop);
     }
     requestAnimationFrame(stimLoop);
-    /* -- réponse -- */
-    function onSpace(e){
-      if(e.code==="Space"&&active){
-        active=false;removeEventListener('keydown',onSpace);
-        const rt=Math.round(performance.now()-t0);
-        scr.textContent="";ans.style.display="block";ans.value="";ans.focus();resizeAll();
-        ans.addEventListener('keydown',function onEnter(ev){
-          if(ev.key==="Enter"){ev.preventDefault();
-            results.push({word:w,rt_ms:rt,response:ans.value.trim()});
-            ans.removeEventListener('keydown',onEnter);ans.style.display="none";
-            trial++;nextTrial();}
-        });
-      }
+
+    /* -- réponse clavier (ESPACE) OU TAP écran ------------------------- */
+    function onTrigger(e){
+      // clavier : uniquement barre espace
+      if(e instanceof KeyboardEvent && e.code!=="Space") return;
+      // empêche double-tap / scroll
+      if(e instanceof PointerEvent) e.preventDefault();
+      if(!active) return;
+      active=false;
+      removeEventListener('keydown',onTrigger);
+      removeEventListener('pointerdown',onTrigger);
+      const rt=Math.round(performance.now()-t0);
+      scr.textContent="";ans.style.display="block";ans.value="";ans.focus();resizeAll();
+      ans.addEventListener('keydown',function onEnter(ev){
+        if(ev.key==="Enter"){ev.preventDefault();
+          results.push({word:w,rt_ms:rt,response:ans.value.trim()});
+          ans.removeEventListener('keydown',onEnter);ans.style.display="none";
+          trial++;nextTrial();}
+      });
     }
-    addEventListener('keydown',onSpace);
+    addEventListener('keydown',onTrigger);
+    addEventListener('pointerdown',onTrigger,{passive:false});
   }
 }
+/* ---------------- fin d'expérience ----------------------------------- */
 function fin(){scr.style.fontSize="min(6vw,48px)";
   scr.textContent=$END_MSG;$DOWNLOAD;resizeAll();}
 $STARTER
 </script></body></html>""")
 
-# ────── 3-bis. constructeur HTML ----------------------------------------
+# ────── 3-bis. constructeur de la page expérience ------------------------
 def experiment_html(words: List[str],
                     hz: int,
                     with_download: bool = True,
                     fullscreen: bool = False) -> str:
     frame   = 1000 / hz
-    cycle_f = int(round(CYCLE_MS / frame))      # 21 f @60 Hz ; 42 f @120 Hz
-    cross_f = int(round(CROSS_MS / frame))      # 30 f @60 Hz ; 60 f @120 Hz
+    cycle_f = int(round(CYCLE_MS / frame))
+    cross_f = int(round(CROSS_MS / frame))
     scale   = hz // 60
     start_f = 1 * scale
     step_f  = 1 * scale
 
-    # bouton de récupération des résultats
     dl_js = ""
     if with_download:
         dl_js = r"""
@@ -267,16 +284,20 @@ a.style.fontSize="min(6vw,32px)";
 a.style.marginTop="30px";
 document.body.appendChild(a);""".replace("$", "$$")
 
-    # déclenchement
     starter = "nextTrial();"
     if fullscreen:
         starter = r"""
-scr.textContent="Appuyez sur la barre ESPACE pour commencer";
-function first(e){if(e.code==="Space"){
-  removeEventListener("keydown",first);
-  document.documentElement.requestFullscreen?.();
-  nextTrial();}}
-addEventListener("keydown",first);"""
+scr.textContent="Touchez l’écran ou appuyez sur ESPACE pour commencer";
+function first(e){
+  if((e instanceof KeyboardEvent && e.code==="Space") ||
+     (e instanceof PointerEvent)){
+    removeEventListener("keydown",first);
+    removeEventListener("pointerdown",first);
+    document.documentElement.requestFullscreen?.();
+    nextTrial();
+  }}
+addEventListener("keydown",first);
+addEventListener("pointerdown",first,{passive:false});"""
 
     return HTML_TPL.substitute(
         WORDS=json.dumps(list(words)),
@@ -287,7 +308,8 @@ addEventListener("keydown",first);"""
         STARTER=starter
     )
 
-# ────── 4. composant test fréquence (HTML rAF) ──────────────────────────
+
+# ────── 4. composant test fréquence (inchangé) ──────────────────────────
 TEST_HTML = r"""
 <!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=0"/>
@@ -306,6 +328,7 @@ requestAnimationFrame(loop);}
 Streamlit.setComponentReady();
 </script></body></html>"""
 
+
 # ────── 5. état de session ──────────────────────────────────────────────
 defaults = {"page": "screen_test", "tirage_ok": False, "tirage_run": False,
             "stimuli": [], "tirage_df": pd.DataFrame(), "exp_started": False,
@@ -314,6 +337,7 @@ for k, v in defaults.items():
     st.session_state.setdefault(k, v)
 p = st.session_state
 def go(page: str): p.page = page; do_rerun()
+
 
 # ────── 6. navigation / pages ───────────────────────────────────────────
 # 0) test écran -----------------------------------------------------------
@@ -355,8 +379,8 @@ elif p.page == "intro":
 Chaque essai : croix de fixation (500 ms) → mot bref → masque (`#####`).
 
 • Fixez le centre de l’écran  
-• Dès que vous reconnaissez le mot, appuyez sur **ESPACE**  
-• Tapez ensuite le mot puis **Entrée**
+• Dès que vous reconnaissez le mot, **touchez l’écran OU appuyez sur ESPACE**  
+• Puis tapez le mot et validez avec **Entrée**
 
 Déroulement : 2 essais d’entraînement + 80 essais de test
 """)
@@ -374,7 +398,7 @@ Déroulement : 2 essais d’entraînement + 80 essais de test
 # 3) familiarisation ------------------------------------------------------
 elif p.page == "fam":
     st.header("Familiarisation (2 mots)")
-    st.write("Croix 500 ms → mot → masque. Appuyez sur **ESPACE** dès que possible.")
+    st.write("Croix 500 ms → mot → masque. Touchez l’écran ou appuyez sur ESPACE dès que possible.")
     components.html(
         experiment_html(PRACTICE_WORDS, p.hz_sel,
                         with_download=False, fullscreen=False),
