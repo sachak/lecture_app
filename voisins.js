@@ -1,7 +1,7 @@
 'use strict';
 
 /********************************************************************
- * 0.  CONFIGURATION GLOBALE
+ * 0. CONFIGURATION
  *******************************************************************/
 const CFG = {
   XLSX_FILE      : "Lexique.xlsx",
@@ -14,15 +14,14 @@ const CFG = {
   MEAN_FACTOR_OLDPLD:.35,
   MEAN_DELTA:{letters:.68,phons:.68},
   SD_MULT:{letters:2,phons:2,old20:.28,pld20:.28,freq:1.9},
-  HZ:null               // sera défini après choix participant
+  HZ:null
 };
 
 /********************************************************************
- * 1.  OUTILS DIVERS
+ * 1. OUTILS GÉNÉRAUX
  *******************************************************************/
-const $ = sel => document.querySelector(sel);
+const $ = s=>document.querySelector(s);
 const page=$('#page'), scr=$('#scr'), ans=$('#ans'), vk=$('#vk');
-
 const rng=()=>Math.random();
 const shuffled=a=>[...a].sort(()=>rng()-.5);
 const mean=a=>a.reduce((s,x)=>s+x,0)/a.length;
@@ -31,28 +30,26 @@ const pick=(a,n)=>shuffled(a).slice(0,n);
 const toFloat=v=>typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
 
 /********************************************************************
- * 2.  LECTURE DE LEXIQUE.XLSX + TIRAGE 80 MOTS
+ * 2. LECTURE / PRÉPARATION LEXIQUE
  *******************************************************************/
 async function loadSheets(){
-  const data = await fetch(CFG.XLSX_FILE).then(r=>r.arrayBuffer());
-  const wb   = XLSX.read(data,{type:"array"});
-  const shNames = wb.SheetNames.filter(s=>s.toLowerCase().startsWith("feuil"));
+  const data=await fetch(CFG.XLSX_FILE).then(r=>r.arrayBuffer());
+  const wb=XLSX.read(data,{type:"array"});
+  const shNames=wb.SheetNames.filter(s=>s.toLowerCase().startsWith("feuil"));
   if(shNames.length!==4) throw "Il faut exactement 4 feuilles Feuil1…Feuil4";
 
   const feuilles={}, allFreq=new Set();
   for(const sh of shNames){
-    const json = XLSX.utils.sheet_to_json(wb.Sheets[sh],{defval:null,raw:false});
-    const cols = Object.keys(json[0]).map(c=>c.trim().toLowerCase());
-    const need = ["ortho","old20","pld20","nblettres","nbphons"];
-    need.forEach(c=>{if(!cols.includes(c))throw `Colonne manquante ${c} dans ${sh}`});
-    const freqCols = cols.filter(c=>c.startsWith("freq"));
+    const json=XLSX.utils.sheet_to_json(wb.Sheets[sh],{defval:null,raw:false});
+    const cols=Object.keys(json[0]).map(c=>c.trim().toLowerCase());
+    const need=["ortho","old20","pld20","nblettres","nbphons"];
+    need.forEach(c=>{if(!cols.includes(c))throw`Colonne ${c} manquante`});
+    const freqCols=cols.filter(c=>c.startsWith("freq"));
     freqCols.forEach(c=>allFreq.add(c));
 
     const df=json.filter(r=>need.every(k=>r[k]!=null)).map(r=>{
-      const o={};
-      [...need,...freqCols].forEach(k=>o[k]=toFloat(r[k]));
-      o.ortho=String(r.ortho).toUpperCase();
-      return o;
+      const o={}; [...need,...freqCols].forEach(k=>o[k]=toFloat(r[k]));
+      o.ortho=String(r.ortho).toUpperCase(); return o;
     });
     const stats={};
     CFG.NUM_BASE.forEach(c=>stats["m_"+c]=mean(df.map(r=>r[c])));
@@ -62,14 +59,11 @@ async function loadSheets(){
   feuilles.allFreqCols=[...allFreq];
   return feuilles;
 }
-
-function masks(r,st){return{
-  LOW_OLD:r.old20<st.m_old20,  HIGH_OLD:r.old20>st.m_old20,
-  LOW_PLD:r.pld20<st.m_pld20,  HIGH_PLD:r.pld20>st.m_pld20};}
-
+function masks(r,s){return{LOW_OLD:r.old20<s.m_old20, HIGH_OLD:r.old20>s.m_old20,
+                           LOW_PLD:r.pld20<s.m_pld20, HIGH_PLD:r.pld20>s.m_pld20};}
 function meanLpOK(sub,st){
   return Math.abs(mean(sub.map(r=>r.nblettres))-st.m_nblettres)<=CFG.MEAN_DELTA.letters*st.sd_nblettres &&
-         Math.abs(mean(sub.map(r=>r.nbphons))-st.m_nbphons)<=CFG.MEAN_DELTA.phons*st.sd_nbphons;}
+         Math.abs(mean(sub.map(r=>r.nbphons))-st.m_nbphons)<=CFG.MEAN_DELTA.phons*st.sd_nbphons; }
 function sdOK(sub,st,fq){
   const v=a=>std(a);
   return v(sub.map(r=>r.nblettres))<=st.sd_nblettres*CFG.SD_MULT.letters &&
@@ -77,10 +71,9 @@ function sdOK(sub,st,fq){
          v(sub.map(r=>r.old20))    <=st.sd_old20    *CFG.SD_MULT.old20   &&
          v(sub.map(r=>r.pld20))    <=st.sd_pld20    *CFG.SD_MULT.pld20   &&
          fq.every(c=>v(sub.map(r=>r[c]))<=st["sd_"+c]*CFG.SD_MULT.freq);}
-
 function pickFive(tag,feuille,used,F){
   const {df,stats:st,freqCols:fq}=F[feuille];
-  const pool=df.filter(r=>masks(r,st)[tag] && !used.has(r.ortho));
+  const pool=df.filter(r=>masks(r,st)[tag]&&!used.has(r.ortho));
   if(pool.length<CFG.N_PER_FEUIL_TAG) return null;
   for(let i=0;i<CFG.MAX_TRY_TAG;i++){
     const samp=pick(pool,CFG.N_PER_FEUIL_TAG);
@@ -91,34 +84,26 @@ function pickFive(tag,feuille,used,F){
     if(tag==="HIGH_PLD"&& mPld<=st.m_pld20+CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(!meanLpOK(samp,st)||!sdOK(samp,st,fq)) continue;
     return samp;
-  }
-  return null;
+  } return null;
 }
-
 async function buildSheet(){
   const F=await loadSheets();
   const shNames=Object.keys(F).filter(k=>k!=="allFreqCols");
   for(let t=0;t<CFG.MAX_TRY_FULL;t++){
-    const take={}, groups=[];
-    shNames.forEach(sh=>take[sh]=new Set());
-    let ok=true;
+    const take={}, groups=[]; shNames.forEach(sh=>take[sh]=new Set()); let ok=true;
     for(const tag of CFG.TAGS){
       const bloc=[];
       for(const sh of shNames){
-        const sub=pickFive(tag,sh,take[sh],F);
-        if(!sub){ok=false;break;}
+        const sub=pickFive(tag,sh,take[sh],F); if(!sub){ok=false;break;}
         bloc.push(...sub); sub.forEach(r=>take[sh].add(r.ortho));
-      }
-      if(!ok) break;
-      groups.push(shuffled(bloc));
+      } if(!ok) break; groups.push(shuffled(bloc));
     }
     if(ok) return groups.flat();
-  }
-  throw "Impossible de générer la liste.";
+  } throw"Impossible de générer la liste.";
 }
 
 /********************************************************************
- * 3.  VARIABLES DÉRIVÉES DE LA FRÉQUENCE
+ * 3. VARIABLES dépendant de la fréquence
  *******************************************************************/
 let FRAME_MS,CYCLE_F,CROSS_F,SCALE,START_F,STEP_F,IS_TOUCH;
 function setHz(hz){
@@ -133,7 +118,7 @@ function setHz(hz){
 }
 
 /********************************************************************
- * 4.  PETITES FONCTIONS UI
+ * 4. UI: redimension
  *******************************************************************/
 function resizeScr(){
   const b=Math.min(innerWidth,innerHeight);
@@ -143,23 +128,24 @@ function resizeScr(){
 }
 addEventListener('resize',resizeScr);
 addEventListener('orientationchange',resizeScr);
-addEventListener('load',()=>{document.body.focus();setTimeout(resizeScr,80);});
+addEventListener('load',()=>{setTimeout(resizeScr,80);});
 
 /********************************************************************
- * 5.  PHASES
+ * 5. PHASES
  *******************************************************************/
 function page_Hz(){
-  page.innerHTML=`
-    <h2>1. Vérification de la fréquence d’écran</h2>
-    <div id="hzVal" style="font-size:28px;">--</div>
-    <button id="mes">Mesurer</button>
-    <div style="margin-top:20px">
-      <button id="hz60">Utiliser 60 Hz</button>
-      <button id="hz120">Utiliser 120 Hz</button>
-    </div>`;
+  page.innerHTML=`<h2>1. Vérification de la fréquence d’écran</h2>
+  <div id="hzVal" style="font-size:28px;">--</div>
+  <button id="mes">Mesurer</button>
+  <div style="margin-top:20px">
+    <button id="hz60">Utiliser 60 Hz</button>
+    <button id="hz120">Utiliser 120 Hz</button>
+    <button id="hzOther">Autre</button>
+  </div>`;
   $('#mes').onclick=mesureHz;
-  $('#hz60').onclick=()=>goIntro(60);
-  $('#hz120').onclick=()=>goIntro(120);
+  $('#hz60').onclick=()=>startLoading(60);
+  $('#hz120').onclick=()=>startLoading(120);
+  $('#hzOther').onclick=page_Incompatible;
 }
 function mesureHz(){
   const lbl=$('#hzVal'); lbl.textContent='Mesure…'; let f=0,t0=performance.now();
@@ -167,24 +153,31 @@ function mesureHz(){
     lbl.textContent='≈ '+(f*1000/(performance.now()-t0)).toFixed(1)+' Hz';
   }})();
 }
-function goIntro(h){setHz(h); page_Intro();}
+function page_Incompatible(){
+  scr.style.display='none'; page.style.display='flex';
+  page.innerHTML=`<h2>Désolé</h2><p>Cette expérience nécessite un écran 60 Hz ou 120 Hz.</p>`;
+}
 
+/* ---------- tirage automatique + instructions ---------- */
 let WORDS80=[];
+function startLoading(hzSel){
+  setHz(hzSel);
+  page.innerHTML=`<h2>Préparation de l’expérience</h2>
+  <p>Écran sélectionné : <b>${CFG.HZ} Hz</b></p>
+  <p id="statut">Tirage aléatoire des 80 mots…</p>`;
+  buildSheet().then(list=>{
+    WORDS80=list.map(r=>r.ortho);
+    page_Intro();
+  }).catch(err=>{page.innerHTML='<p style="color:red">'+err+'</p>';});
+}
+
 function page_Intro(){
-  page.innerHTML=`<h2>2. Présentation de la tâche</h2>
-<p>Écran sélectionné : <b>${CFG.HZ} Hz</b></p>
-<p>Croix 500 ms → mot bref → masque (#####).<br>
-Touchez l’écran ou barre ESPACE dès que vous reconnaissez le mot,<br>
-puis tapez-le (clavier virtuel sur mobile).</p>
-<p>2 essais d’entraînement puis 80 essais de test.</p>
-<button id="load">Préparer la liste et commencer la familiarisation</button>`;
-  $('#load').onclick=async()=>{
-    $('#load').disabled=true; $('#load').textContent='Tirage aléatoire…';
-    WORDS80 = (await buildSheet()).map(r=>r.ortho);
-    $('#load').textContent='Commencer la familiarisation';
-    $('#load').disabled=false;
-    $('#load').onclick=page_Practice;
-  };
+  page.innerHTML=`<h2>Instructions</h2>
+  <p>Croix 500 ms → mot très bref → masque (#####).</p>
+  <p>Touchez l’écran ou barre ESPACE dès que le mot est reconnu,<br>
+     puis tapez-le (clavier virtuel sur mobile).</p>
+  <button id="startP">Commencer la familiarisation</button>`;
+  $('#startP').onclick=page_Practice;
 }
 
 function page_Practice(){
@@ -195,8 +188,7 @@ function page_Practice(){
 function page_TestReady(){
   scr.style.display='none'; page.style.display='flex';
   page.innerHTML=`<h2>Fin de l’entraînement</h2>
-<p>Quand vous êtes prêt·e :</p>
-<button id="goFull">Commencer le test (plein écran)</button>`;
+  <button id="goFull">Commencer le test (plein écran)</button>`;
   $('#goFull').onclick=()=>{
     document.documentElement.requestFullscreen?.();
     page.style.display='none'; scr.style.display='block';
@@ -205,20 +197,21 @@ function page_TestReady(){
 }
 
 /********************************************************************
- * 6.  RUN BLOCK  (avec correctif touche ENTER)
+ * 6. RUN BLOCK  (validation Enter desktop + ↵ virtuel + blur)
  *******************************************************************/
 function runBlock(wordArr, phaseLabel, onFinish){
   let trial=0, results=[];
 
   const nextTrial = ()=>{
-    if(trial>=wordArr.length){ onFinish(results); return;}
+    if(trial>=wordArr.length){onFinish(results); return;}
+    const w=wordArr[trial], mask="#".repeat(w.length);
     scr.textContent="+"; let frame=0, active=true;
     const crossLoop=()=>{if(!active)return;
       if(++frame>=CROSS_F)startStimulus();else requestAnimationFrame(crossLoop);};
     requestAnimationFrame(crossLoop);
 
     function startStimulus(){
-      const w=wordArr[trial], mask="#".repeat(w.length); let showF=START_F, subF=0, phase="show";
+      let showF=START_F,subF=0,phase="show";
       const t0=performance.now();
       (function anim(){
         if(!active)return;
@@ -237,57 +230,43 @@ function runBlock(wordArr, phaseLabel, onFinish){
         if(!active)return; active=false;
         removeEventListener('keydown',trigger);
         if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
-        promptAnswer(Math.round(performance.now()-t0),w);
+        promptAnswer(Math.round(performance.now()-t0), w);
       }
       addEventListener('keydown',trigger);
       if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
     }
   };
 
-  function promptAnswer(rt, currentWord){
-    /* affichage champ réponse */
-    scr.textContent=""; ans.value=""; ans.style.display="block";
-    if(IS_TOUCH){ ans.readOnly=true; buildVK(); vk.style.display='flex'; }
-    else{ ans.readOnly=false; setTimeout(()=>ans.focus(),40); }
-    resizeScr();
+  function promptAnswer(rt,currentWord){
+    scr.textContent=""; ans.value=""; ans.style.display='block';
+    buildVK(); vk.style.display='flex';
+    setTimeout(()=>ans.focus(),40); resizeScr();
 
-    /* fonction de clôture */
     function finish(){
       ans.blur();
-      ans.removeEventListener('keydown', onEnter);
-      ans.style.display = 'none';
-      vk.style.display  = 'none';
-      results.push({word: currentWord,
-                rt_ms: rt,
-                response: ans.value.trim(),
-                phase: phaseLabel});
-  trial++;
-  nextTrial();
-}
-
-    /* ENTER (clavier physique) */
+      ans.removeEventListener('keydown',onEnter);
+      ans.style.display='none'; vk.style.display='none';
+      results.push({word:currentWord,rt_ms:rt,response:ans.value.trim(),phase:phaseLabel});
+      trial++; nextTrial();
+    }
     function onEnter(ev){
-      if(ev.key==="Enter" || ev.keyCode===13){
-        ev.preventDefault(); finish();
-      }
+      if(ev.key==="Enter"||ev.keyCode===13){ev.preventDefault(); finish();}
     }
     ans.addEventListener('keydown',onEnter);
-
-    /* ENTER du clavier virtuel */
-    window.finishAnswer = finish;
+    window.finishAnswer=finish;           // ↵ du clavier virtuel
   }
 
   nextTrial();
 }
 
 /********************************************************************
- * 7.  FIN EXPÉRIMENTATION
+ * 7. FIN EXPÉRIMENTATION
  *******************************************************************/
 function endExperiment(res){
   scr.style.fontSize="min(6vw,48px)";
   scr.textContent="Merci !";
   const csv=["word;rt_ms;response;phase",...res.map(r=>
-        `${r.word};${r.rt_ms};${r.response};${r.phase}`)].join("\n");
+    `${r.word};${r.rt_ms};${r.response};${r.phase}`)].join("\n");
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
   a.download="results.csv"; a.textContent="Télécharger les résultats";
@@ -297,7 +276,7 @@ function endExperiment(res){
 }
 
 /********************************************************************
- * 8.  CLAVIER VIRTUEL
+ * 8. CLAVIER VIRTUEL
  *******************************************************************/
 function buildVK(){ if(vk.firstChild) return;
   const rows=["QWERTZUIOP","ASDFGHJKL","YXCVBNM","ÇÉÈÊÏÔ←↵"];
@@ -309,7 +288,7 @@ function buildVK(){ if(vk.firstChild) return;
     }); vk.appendChild(d);
   });
   vk.addEventListener('pointerdown',e=>{
-    const t=e.target; if(!t.classList.contains('key')) return;
+    const t=e.target;if(!t.classList.contains('key'))return;
     e.preventDefault(); const k=t.textContent;
     if(k==="←") ans.value=ans.value.slice(0,-1);
     else if(k==="↵") window.finishAnswer?.();
@@ -318,6 +297,6 @@ function buildVK(){ if(vk.firstChild) return;
 }
 
 /********************************************************************
- * 9.  LANCEMENT
+ * 9. LANCEMENT
  *******************************************************************/
 page_Hz();
