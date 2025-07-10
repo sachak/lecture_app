@@ -253,11 +253,17 @@ function runBlock(wordArr, phaseLabel, onFinish){
 
     /* fonction de clôture */
     function finish(){
-      ans.removeEventListener('keydown',onEnter);
-      ans.style.display='none'; vk.style.display='none';
-      results.push({word:currentWord,rt_ms:rt,response:ans.value.trim(),phase:phaseLabel});
-      trial++; nextTrial();
-    }
+      ans.blur();
+      ans.removeEventListener('keydown', onEnter);
+      ans.style.display = 'none';
+      vk.style.display  = 'none';
+      results.push({word: currentWord,
+                rt_ms: rt,
+                response: ans.value.trim(),
+                phase: phaseLabel});
+  trial++;
+  nextTrial();
+}
 
     /* ENTER (clavier physique) */
     function onEnter(ev){
