@@ -6,11 +6,12 @@
 import os
 import logging
 import json
+import traceback               # ← pour afficher la pile d'appels
 import pyodbc
 import azure.functions as func
 
 # ----------------------------------------------------------------------------
-# 1. Création de l'application Functions (modèle Python v2)
+# 1. Création de l'application Functions
 # ----------------------------------------------------------------------------
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
@@ -25,12 +26,12 @@ API_SECRET = os.getenv("API_SECRET")      # facultatif
 # ----------------------------------------------------------------------------
 @app.route(
     route="save_results",                 # URL : /api/save_results
-    methods=["POST", "OPTIONS"],          # ← POST + OPTIONS
+    methods=["POST", "OPTIONS"],          # POST + OPTIONS
     auth_level=func.AuthLevel.FUNCTION
 )
 def save_results(req: func.HttpRequest) -> func.HttpResponse:
     # ------------------------------------------------------------------------
-    # A. Requête OPTIONS = pré-vol CORS  -------------------------------------
+    # A. Requête OPTIONS (pré-vol CORS)
     # ------------------------------------------------------------------------
     if req.method == "OPTIONS":
         return func.HttpResponse(
@@ -47,8 +48,7 @@ def save_results(req: func.HttpRequest) -> func.HttpResponse:
     # ------------------------------------------------------------------------
     logging.info("Réception d'une requête POST /save_results")
     if API_SECRET:
-        client_secret = req.headers.get("x-api-secret")
-        if client_secret != API_SECRET:
+        if req.headers.get("x-api-secret") != API_SECRET:
             logging.warning("Secret incorrect")
             return func.HttpResponse(
                 "Forbidden",
@@ -100,10 +100,14 @@ def save_results(req: func.HttpRequest) -> func.HttpResponse:
             headers={"Access-Control-Allow-Origin": "*"}
         )
 
-    except Exception as e:
-        logging.exception("Erreur SQL")
-        return func.HttpResponse(
-            f"DB error : {e}",
+    # ------------------------------------------------------------------------
+    # E. Gestion des erreurs SQL  (pile renvoyée pour debug)
+    # ------------------------------------------------------------------------
+    except Exception:
+        tb = traceback.format_exc()
+        logging.error(tb)                   # écrit la pile dans les logs Azure
+        return func.HttpResponse(           # renvoie aussi la pile au client
+            f"DB error :\n{tb}",
             status_code=500,
             headers={"Access-Control-Allow-Origin": "*"}
         )
