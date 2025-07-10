@@ -1,3 +1,6 @@
+/* ***************************************************************************
+ * EXPÉRIENCE  –  Collecte de données vers Azure SQL (Function HTTP)
+ * ***************************************************************************/
 'use strict';
 
 /********************************************************************
@@ -17,23 +20,28 @@ const CFG = {
   MEAN_FACTOR_OLDPLD : .35,
   MEAN_DELTA     : {letters:.68, phons:.68},
   SD_MULT        : {letters:2, phons:2, old20:.28, pld20:.28, freq:1.9},
-  HZ             : null            // défini après choix participant
+  HZ             : null,            // défini après choix participant
+
+  // Paramètres API (à personnaliser)
+  API_URL        : "https://TONAPPFN.azurewebsites.net/api/save_results",
+  API_KEY        : "TA_FUNCTION_KEY",
+  API_SECRET     : "MA_SUPER_CLE_SECRETE"   // ← laisser "" si non utilisé
 };
 
 /********************************************************************
  * 1. OUTILS GÉNÉRAUX
  ********************************************************************/
-const $      = s => document.querySelector(s);
-const page   = $('#page');
-const scr    = $('#scr');
-const ans    = $('#ans');
-const vk     = $('#vk');
-const rng    = () => Math.random();
+const $ = s => document.querySelector(s);
+const page = $('#page');
+const scr  = $('#scr');
+const ans  = $('#ans');
+const vk   = $('#vk');
+const rng  = () => Math.random();
 const shuffled = a => [...a].sort(() => rng() - .5);
-const mean   = a => a.reduce((s,x)=>s+x,0)/a.length;
-const std    = a => {const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
-const pick   = (a,n)=>shuffled(a).slice(0,n);
-const toFloat= v => typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
+const mean     = a => a.reduce((s,x)=>s+x,0)/a.length;
+const std      = a => {const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
+const pick     = (a,n)=>shuffled(a).slice(0,n);
+const toFloat  = v => typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
 
 /********************************************************************
  * 2. LECTURE .XLSX + TIRAGE 80 MOTS
@@ -221,7 +229,7 @@ function page_TestReady(){
 }
 
 /********************************************************************
- * 6. RUN BLOCK  (VK seulement si TAP)
+ * 6. RUN BLOCK  (présentation / réponses)
  ********************************************************************/
 function runBlock(wordArr, phaseLabel, onFinish){
   let trial=0, results=[];
@@ -296,21 +304,35 @@ function runBlock(wordArr, phaseLabel, onFinish){
 }
 
 /********************************************************************
- * 7. FIN D’EXPÉRIENCE
+ * 7. FIN D’EXPÉRIENCE — ENVOI VERS AZURE FUNCTION
  ********************************************************************/
-function endExperiment(res){
-  scr.style.fontSize="min(6vw,48px)";
-  scr.textContent="Merci !";
-  const csv=["word;rt_ms;response;phase", ...res.map(r=>
-    `${r.word};${r.rt_ms};${r.response};${r.phase}`)].join("\n");
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download="results.csv";
-  a.textContent="Télécharger les résultats";
-  a.style.fontSize="min(6vw,32px)";
-  a.style.marginTop="30px";
-  document.body.appendChild(a);
-  if(typeof testableSubmit==="function") testableSubmit({csv});
+function endExperiment(results){
+  scr.style.fontSize = "min(6vw,48px)";
+  scr.textContent    = "Merci, enregistrement…";
+
+  const url = CFG.API_URL + "?code=" + encodeURIComponent(CFG.API_KEY);
+
+  fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(CFG.API_SECRET ? {"x-api-secret": CFG.API_SECRET} : {})
+    },
+    body: JSON.stringify(results)
+  })
+  .then(r => {
+    if (r.ok) {
+      scr.textContent = "Merci ! Vos réponses sont enregistrées.";
+    } else {
+      return r.text().then(txt=>{
+        scr.textContent = "Erreur ("+r.status+") : "+txt;
+      });
+    }
+  })
+  .catch(err => {
+    console.error(err);
+    scr.textContent = "Erreur réseau. Merci de réessayer plus tard.";
+  });
 }
 
 /********************************************************************
