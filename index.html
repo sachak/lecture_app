@@ -1,15 +1,43 @@
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
-<title>Expérience 3 – voisins.js</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-</head><body>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Expérience 3 – Reconnaissance de mots</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0">
 
-<!-- Conteneur éventuel -->
-<div id="app"></div>
+<!-- --------- STYLE --------- -->
+<style>
+html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
+          display:flex;flex-direction:column;align-items:center;justify-content:center;
+          font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation}
+#scr{font-size:7vw;line-height:1.15;max-width:90vw;word-break:break-word;text-align:center;
+     user-select:none;text-shadow:0 2px 6px #222}
+#ans{display:none;font-size:5vw;width:70vw;max-width:92vw;text-align:center;background:#fff;
+     color:#000;border:none;padding:1.1vw .6vw;margin-top:2vh;border-radius:.5vw;outline:none}
+#vk{display:none;flex-direction:column;align-items:center;margin-top:2vh}
+.krow{display:flex;justify-content:center;margin:.2vh 0}
+.key{user-select:none;border:none;margin:0 .8vw;border-radius:.8vw;background:#333;color:#fff;
+     font-weight:600;font-size:6vw;min-width:8vw;padding:.6vh 0}
+.key:active{background:#555}
+@media (min-width:500px){.key{font-size:28px}}
+@media (max-width:700px){#scr{font-size:14vw}#ans{font-size:8vw}}
+@media (max-width:470px){#scr{font-size:18vw}#ans{font-size:11vw}}
+@media (min-width:1600px) and (min-height:900px){
+  #scr{font-size:4vw}#ans{font-size:2.5vw}}
+::placeholder{color:#bbb}
+</style>
 
-<!-- 1) votre script principal -->
-<script src="voisins.js"></script>
-
-<!-- 2) si vous utilisez SheetJS ou autre CDN -->
+<!-- ------- SheetJS (XLSX) ------- -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.1/xlsx.full.min.js"></script>
+</head>
 
-</body></html>
+<body tabindex="0">
+  <div id="scr"></div>
+  <input id="ans" autocomplete="off" autocorrect="off"
+         autocapitalize="off" spellcheck="false">
+  <div id="vk"></div>
+
+  <!-- votre code principal -->
+  <script src="voisins.js"></script>
+</body>
+</html>
