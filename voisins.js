@@ -25,7 +25,7 @@ const CFG = {
   // Paramètres API (à personnaliser)
   API_URL   : "/api/save_results",
   API_KEY   : "",
-  API_SECRET: "MA_SUPER_CLE_SECRETE"
+  API_SECRET: "udzKkYgnwQnfs7LW2Oi3xwgfhDhYiucZaXZrV4sY"
 };
 
 /********************************************************************
