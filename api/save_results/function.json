@@ -2,12 +2,12 @@
   "scriptFile": "__init__.py",
   "bindings": [
     {
-      "authLevel": "function",     // nécessite la function key côté serveur SWA
-      "type": "httpTrigger",       // déclencheur HTTP
+      "authLevel": "function",
+      "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "methods": [ "post" ],       // on accepte uniquement les requêtes POST
-      "route": "save_results"      // URL : /api/save_results
+      "methods": [ "post", "options" ],
+      "route": "save_results"
     },
     {
       "type": "http",
