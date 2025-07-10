@@ -2,4 +2,5 @@ streamlit>=1.46.0
 pandas
 numpy
 openpyxl>=3.1.2
-
+azure-functions
+pyodbc
