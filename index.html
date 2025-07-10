@@ -10,8 +10,21 @@ html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
           font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation;
           display:flex;flex-direction:column;align-items:center;justify-content:center}
 #page{display:flex;flex-direction:column;align-items:center;text-align:center;gap:18px}
-button{font-size:22px;padding:8px 28px;border-radius:8px;border:none;background:#444;color:#fff}
+
+/* --- boutons --- */
+button{
+  font-size:22px;padding:8px 28px;border:none;border-radius:8px;
+  background:#444;color:#fff;margin:6px 8px;         /* ← marge ajoutée */
+}
 button:active{background:#666}
+
+/* Sur très petit écran on passe les boutons en colonne pour plus d’espace */
+@media(max-width:480px){
+  .btnrow{display:flex;flex-direction:column;align-items:center}
+  button{width:85vw;max-width:320px;margin:5px 0}
+}
+
+/* zone stimuli / réponses */
 #scr{font-size:7vw;text-align:center;line-height:1.15;user-select:none;text-shadow:0 2px 6px #222}
 #ans{display:none;font-size:5vw;width:70vw;max-width:92vw;text-align:center;background:#fff;
      color:#000;border:none;padding:1.1vw .6vw;margin-top:2vh;border-radius:.5vw;outline:none}
@@ -25,7 +38,6 @@ button:active{background:#666}
 @media (max-width:470px){#scr{font-size:18vw}#ans{font-size:11vw}}
 </style>
 
-<!-- bibliothèque SheetJS -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 </head>
 
