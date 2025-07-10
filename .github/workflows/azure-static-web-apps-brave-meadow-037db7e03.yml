@@ -1,5 +1,6 @@
 name: Azure Static Web Apps CI/CD
 
+# Déclenchement : à chaque push ou PR sur main
 on:
   push:
     branches: [ main ]
@@ -12,26 +13,40 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
+
     permissions:
-      id-token: write
+      id-token: write     # nécessaire si tu utilises OIDC (facultatif ici)
       contents: read
 
     steps:
+      # Récupère les sources
       - uses: actions/checkout@v3
         with:
           submodules: true
           lfs: false
 
-      - name: Build & Deploy
-        id: builddeploy
+      # Étape de déploiement vers Azure Static Web App
+      - name: Deploy to Azure Static Web Apps
+        id: deploy
         uses: Azure/static-web-apps-deploy@v1
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_BRAVE_MEADOW_037DB7E03 }}
+          # Jeton de déploiement stocké dans GitHub → Settings → Secrets → Actions
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_TOKEN }}
 
-          # ————————————— Chemins de ton site —————————————
-          action:             upload          # simple copie
-          app_location:       "/"             # index.html à la racine
-          api_location:       ""              # pas d’API dans ce dépôt
-          output_location:    ""              # pas de dossier de build
-          skip_app_build:     true            # <—— désactive totalement la phase build
-          # ————————————————————————————————————————————————
+          action: upload             # simple copie des fichiers
+          app_location: "/"          # tes fichiers (index.html, voisins.js, …) sont à la racine
+          api_location: ""           # pas d'API dans ce repo
+          output_location: ""        # vide : pas de dossier de build
+          skip_app_build: true       # DÉSACTIVE complètement la phase de build
+
+  # Ferme automatiquement le déploiement de pull-request une fois la PR close
+  close_pull_request_job:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    name: Close Pull Request Job
+    steps:
+      - name: Close Pull Request
+        id: close_pr
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          action: close
