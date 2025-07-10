@@ -23,7 +23,7 @@ const CFG = {
   HZ             : null,            // défini après choix participant
 
   // Paramètres API (à personnaliser)
-  API_URL   : "https://gray-tree-061b45603.2.azurestaticapps.net",
+  API_URL   : "/api/save_results",
   API_KEY   : "",
   API_SECRET: "udzKkYgnwQnfs7LW2Oi3xwgfhDhYiucZaXZrV4sY"
 };
