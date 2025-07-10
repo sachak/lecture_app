@@ -23,9 +23,9 @@ const CFG = {
   HZ             : null,            // défini après choix participant
 
   // Paramètres API (à personnaliser)
-  API_URL        : "https://TONAPPFN.azurewebsites.net/api/save_results",
-  API_KEY        : "TA_FUNCTION_KEY",
-  API_SECRET     : "MA_SUPER_CLE_SECRETE"   // ← laisser "" si non utilisé
+  API_URL   : "/api/save_results",
+  API_KEY   : "",
+  API_SECRET: "MA_SUPER_CLE_SECRETE"
 };
 
 /********************************************************************
