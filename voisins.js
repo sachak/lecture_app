@@ -1,39 +1,7 @@
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0">
-<title>Expérience 3 – 100 % JavaScript</title>
+'use strict';
 
-<!-- ─────────── 1.  FEUILLES DE STYLE ─────────── -->
-<style>
-html,body{width:100vw;height:100vh;margin:0;background:#000;color:#fff;
-          display:flex;flex-direction:column;align-items:center;justify-content:center;
-          font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation}
-#scr{font-size:7vw;line-height:1.15;max-width:90vw;word-break:break-word;text-align:center;
-     user-select:none;text-shadow:0 2px 6px #222}
-#ans{display:none;font-size:5vw;width:70vw;max-width:92vw;text-align:center;background:#fff;
-     color:#000;border:none;padding:1.1vw .6vw;margin-top:2vh;border-radius:.5vw;outline:none}
-#vk{display:none;flex-direction:column;align-items:center;margin-top:2vh}
-.krow{display:flex;justify-content:center;margin:.2vh 0}
-.key{user-select:none;border:none;margin:0 .8vw;border-radius:.8vw;background:#333;color:#fff;
-     font-weight:600;font-size:6vw;min-width:8vw;padding:.6vh 0}
-.key:active{background:#555}
-@media (min-width:500px){.key{font-size:28px}}
-@media (max-width:700px){#scr{font-size:14vw}#ans{font-size:8vw}}
-@media (max-width:470px){#scr{font-size:18vw}#ans{font-size:11vw}}
-@media (min-width:1600px) and (min-height:900px){
-  #scr{font-size:4vw}#ans{font-size:2.5vw}}
-::placeholder{color:#bbb}
-</style>
-
-<!-- ─────────── 2.  LIBRAIRIE XLSX (SheetJS) ─────────── -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.1/xlsx.full.min.js"></script>
-
-</head><body tabindex="0">
-<div id="scr"></div><input id="ans" autocomplete="off" autocorrect="off"
- autocapitalize="off" spellcheck="false"><div id="vk"></div>
-
-<script>
 /**********************************************************************
- * 3. CONFIGURATION GLOBALE  (reprend les constantes Python)
+ * 1. CONFIGURATION
  *********************************************************************/
 const CFG = {
   XLSX_FILE        : "Lexique.xlsx",
@@ -48,42 +16,44 @@ const CFG = {
   MEAN_FACTOR_OLDPLD: .35,
   MEAN_DELTA       : {letters:.68, phons:.68},
   SD_MULT          : {letters:2, phons:2, old20:.28, pld20:.28, freq:1.9},
-  HZ               : 60,    // 60 ou 120 ⇒ ajustera les frames
+  HZ               : 60,           // 60 ou 120
   TOUCH_TRIGGER    : true
 };
-/**********************************************************************
- * 4. OUTILS GÉNÉRIQUES
- *********************************************************************/
-const rng = ()=>Math.random();
-const shuffled = arr => [...arr].sort(()=>rng()-.5);
-const catCode = tag => tag.includes("LOW") ? -1 : (tag.includes("HIGH")?1:0);
-const mean  = a => a.reduce((s,x)=>s+x,0)/a.length;
-const std   = a => {const m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
-const pick  = (arr,n)=>shuffled(arr).slice(0,n);
-const toFloat = v => typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
 
 /**********************************************************************
- * 5.   CHARGER & PRÉPARER LES FEUILLES EXCEL (SheetJS)
+ * 2. OUTILS
+ *********************************************************************/
+const rng       = () => Math.random();
+const shuffled  = a  => [...a].sort(()=>rng()-.5);
+const catCode   = t  => t.includes("LOW")?-1:(t.includes("HIGH")?1:0);
+const mean      = a  => a.reduce((s,x)=>s+x,0)/a.length;
+const std       = a  => {const m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
+const pick      = (a,n)=>shuffled(a).slice(0,n);
+const toFloat   = v  => typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
+
+/**********************************************************************
+ * 3. LECTURE DE LEXIQUE.XLSX (SheetJS)
  *********************************************************************/
 async function loadSheets(){
-  const data = await fetch(CFG.XLSX_FILE).then(r=>r.arrayBuffer());
-  const wb   = XLSX.read(data,{type:"array"});
-  const shNames = wb.SheetNames.filter(s=>s.toLowerCase().startsWith("feuil"));
-  if(shNames.length!==4) throw("Il faut exactement 4 feuilles Feuil1…Feuil4");
+  const data=await fetch(CFG.XLSX_FILE).then(r=>r.arrayBuffer());
+  const wb=XLSX.read(data,{type:"array"});
+  const shNames=wb.SheetNames.filter(s=>s.toLowerCase().startsWith("feuil"));
+  if(shNames.length!==4) throw "Il faut exactement 4 feuilles Feuil1…Feuil4";
+
   const feuilles={}, allFreq=new Set();
   for(const sh of shNames){
-    const json = XLSX.utils.sheet_to_json(wb.Sheets[sh],{defval:null,raw:false});
-    const cols = Object.keys(json[0]).map(c=>c.trim().toLowerCase());
-    const need = ["ortho","old20","pld20","nblettres","nbphons"];
-    need.forEach(c=>{if(!cols.includes(c))throw(`Colonne manquante ${c} dans ${sh}`)});
-    const freqCols = cols.filter(c=>c.startsWith("freq"));
+    const json=XLSX.utils.sheet_to_json(wb.Sheets[sh],{defval:null,raw:false});
+    const cols=Object.keys(json[0]).map(c=>c.trim().toLowerCase());
+    const need=["ortho","old20","pld20","nblettres","nbphons"];
+    need.forEach(c=>{if(!cols.includes(c))throw `Colonne manquante ${c} dans ${sh}`});
+    const freqCols=cols.filter(c=>c.startsWith("freq"));
     freqCols.forEach(c=>allFreq.add(c));
 
-    const df = json.filter(r=>need.every(k=>r[k]!=null)).map(r=>{
-      const obj={};
-      [...need,...freqCols].forEach(k=>obj[k]=toFloat(r[k]));
-      obj.ortho=String(r.ortho).toUpperCase();
-      return obj;
+    const df=json.filter(r=>need.every(k=>r[k]!=null)).map(r=>{
+      const o={};
+      [...need,...freqCols].forEach(k=>o[k]=toFloat(r[k]));
+      o.ortho=String(r.ortho).toUpperCase();
+      return o;
     });
     const stats={};
     CFG.NUM_BASE.forEach(c=>stats["m_"+c]=mean(df.map(r=>r[c])));
@@ -95,7 +65,7 @@ async function loadSheets(){
 }
 
 /**********************************************************************
- * 6.   TIRAGE ALÉATOIRE DES 80 MOTS  (algorithme repris 1:1)
+ * 4. TIRAGE DES 80 MOTS
  *********************************************************************/
 function masks(r,st){return{
   LOW_OLD : r.old20 < st.m_old20,
@@ -103,24 +73,18 @@ function masks(r,st){return{
   LOW_PLD : r.pld20 < st.m_pld20,
   HIGH_PLD: r.pld20 > st.m_pld20
 };}
-
 function meanLpOK(sub,st){
-  return Math.abs(mean(sub.map(r=>r.nblettres))-st.m_nblettres)<=
-           CFG.MEAN_DELTA.letters*st.sd_nblettres &&
-         Math.abs(mean(sub.map(r=>r.nbphons))-st.m_nbphons)<=
-           CFG.MEAN_DELTA.phons*st.sd_nbphons;
+  return Math.abs(mean(sub.map(r=>r.nblettres))-st.m_nblettres)<=CFG.MEAN_DELTA.letters*st.sd_nblettres &&
+         Math.abs(mean(sub.map(r=>r.nbphons))-st.m_nbphons)<=CFG.MEAN_DELTA.phons*st.sd_nbphons;
 }
 function sdOK(sub,st,fq){
-  const v=arr=>std(arr);
-  return (
-    v(sub.map(r=>r.nblettres))<=st.sd_nblettres*CFG.SD_MULT.letters &&
-    v(sub.map(r=>r.nbphons))  <=st.sd_nbphons  *CFG.SD_MULT.phons   &&
-    v(sub.map(r=>r.old20))    <=st.sd_old20    *CFG.SD_MULT.old20   &&
-    v(sub.map(r=>r.pld20))    <=st.sd_pld20    *CFG.SD_MULT.pld20   &&
-    fq.every(c=>v(sub.map(r=>r[c]))<=st["sd_"+c]*CFG.SD_MULT.freq)
-  );
+  const v=a=>std(a);
+  return v(sub.map(r=>r.nblettres))<=st.sd_nblettres*CFG.SD_MULT.letters &&
+         v(sub.map(r=>r.nbphons))  <=st.sd_nbphons  *CFG.SD_MULT.phons   &&
+         v(sub.map(r=>r.old20))    <=st.sd_old20    *CFG.SD_MULT.old20   &&
+         v(sub.map(r=>r.pld20))    <=st.sd_pld20    *CFG.SD_MULT.pld20   &&
+         fq.every(c=>v(sub.map(r=>r[c]))<=st["sd_"+c]*CFG.SD_MULT.freq);
 }
-
 function pickFive(tag,feuille,used,F){
   const {df,stats:st,freqCols:fq}=F[feuille];
   const pool=df.filter(r=>masks(r,st)[tag] && !used.has(r.ortho));
@@ -142,11 +106,11 @@ function pickFive(tag,feuille,used,F){
   }
   return null;
 }
-
 async function buildSheet(){
   const F=await loadSheets();
+  const shNames=Object.keys(F).filter(k=>k!=="allFreqCols");
   for(let t=0;t<CFG.MAX_TRY_FULL;t++){
-    const take={}, groups=[], shNames=Object.keys(F).filter(k=>k!=="allFreqCols");
+    const take={}, groups=[];
     shNames.forEach(sh=>take[sh]=new Set());
     let ok=true;
     for(const tag of CFG.TAGS){
@@ -159,15 +123,13 @@ async function buildSheet(){
       if(!ok) break;
       groups.push(shuffled(bloc));
     }
-    if(ok){
-      return groups.flat();
-    }
+    if(ok) return groups.flat();
   }
-  throw("Impossible de générer la liste.");
+  throw "Impossible de générer la liste.";
 }
 
 /**********************************************************************
- * 7.  PARTIE EXPÉRIMENTALE  (identique à la réponse précédente)
+ * 5. INTERFACE EXPÉRIMENTALE
  *********************************************************************/
 const FRAME_MS = 1000/CFG.HZ;
 const CYCLE_F  = Math.round(CFG.CYCLE_MS/FRAME_MS);
@@ -181,6 +143,7 @@ const scr=document.getElementById('scr');
 const ans=document.getElementById('ans');
 const vk =document.getElementById('vk');
 let finishAnswer=()=>{};
+
 function resizeAll(){
   const b=Math.min(innerWidth,innerHeight);
   scr.style.fontSize=Math.max(Math.round(b*0.08),26)+'px';
@@ -191,9 +154,8 @@ addEventListener('resize',resizeAll);
 addEventListener('orientationchange',resizeAll);
 addEventListener('load',()=>{document.body.focus();setTimeout(resizeAll,80);});
 
-/* ------- clavier virtuel -------- */
 function buildVK(){
-  if(vk.firstChild)return;
+  if(vk.firstChild) return;
   const rows=["QWERTZUIOP","ASDFGHJKL","YXCVBNM","ÇÉÈÊÏÔ←↵"];
   rows.forEach(r=>{
     const d=document.createElement('div');d.className='krow';
@@ -211,26 +173,28 @@ function buildVK(){
   },{passive:false});
 }
 
-/* -------- déroulement global -------- */
+/**********************************************************************
+ * 6. LOGIQUE
+ *********************************************************************/
 let phase="intro", trial=0, WORDS=[], results=[];
 function setWords(arr,p){WORDS=[...arr];trial=0;phase=p;nextTrial();}
+
 function intro(){
   scr.textContent="Chargement du lexique…";
   buildSheet().then(list=>{
-     window.sheet80=list;               // (debug)
-     scr.textContent="Touchez / ESPACE pour commencer la familiarisation";
-     function start(e){
-       if(e instanceof KeyboardEvent && e.code!=="Space") return;
-       if(e instanceof PointerEvent) e.preventDefault();
-       removeEventListener('keydown',start);removeEventListener('pointerdown',start);
-       setWords(CFG.PRACTICE_WORDS,"practice");
-     }
-     addEventListener('keydown',start);
-     addEventListener('pointerdown',start,{passive:false});
+    window.sheet80=list;
+    scr.textContent="Touchez / ESPACE pour commencer la familiarisation";
+    function start(e){
+      if(e instanceof KeyboardEvent && e.code!=="Space") return;
+      if(e instanceof PointerEvent) e.preventDefault();
+      removeEventListener('keydown',start);removeEventListener('pointerdown',start);
+      setWords(CFG.PRACTICE_WORDS,"practice");
+    }
+    addEventListener('keydown',start);
+    addEventListener('pointerdown',start,{passive:false});
   }).catch(err=>scr.textContent=err);
 }
 
-/* -------- essai unique -------- */
 function nextTrial(){
   if(trial>=WORDS.length){fin();return;}
   const w=WORDS[trial],mask="#".repeat(w.length);let active=true;
@@ -258,18 +222,19 @@ function nextTrial(){
     function trigger(e){
       if(e instanceof KeyboardEvent && e.code!=="Space") return;
       if(e instanceof PointerEvent) e.preventDefault();
-      if(!active)return;
+      if(!active) return;
       active=false;
       removeEventListener('keydown',trigger);
-      if(CFG.TOUCH_TRIGGER)removeEventListener('pointerdown',trigger);
+      if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
       promptAnswer(Math.round(performance.now()-t0));
     }
     addEventListener('keydown',trigger);
-    if(CFG.TOUCH_TRIGGER)addEventListener('pointerdown',trigger,{passive:false});
+    if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
   }
 
   function promptAnswer(rt){
-    scr.textContent="";ans.value="";ans.style.display="block";
+    scr.textContent="";
+    ans.value="";ans.style.display="block";
     if(IS_TOUCH){ans.readOnly=true;buildVK();vk.style.display="flex";}
     else{ans.readOnly=false;setTimeout(()=>ans.focus(),40);}
     resizeAll();
@@ -284,20 +249,21 @@ function nextTrial(){
   }
 }
 
-/* -------- fin de phase / fin d’étude -------- */
 function fin(){
   if(phase==="practice"){
     scr.textContent="Fin de la familiarisation. Touchez / ESPACE pour commencer le test";
     function go(e){
-      if(e instanceof KeyboardEvent && e.code!=="Space")return;
+      if(e instanceof KeyboardEvent && e.code!=="Space") return;
       if(e instanceof PointerEvent) e.preventDefault();
       removeEventListener('keydown',go);removeEventListener('pointerdown',go);
       document.documentElement.requestFullscreen?.();
       setWords(shuffled(window.sheet80.map(r=>r.ortho)),"main");
     }
-    addEventListener('keydown',go);addEventListener('pointerdown',go,{passive:false});
+    addEventListener('keydown',go);
+    addEventListener('pointerdown',go,{passive:false});
   }else{
-    scr.style.fontSize="min(6vw,48px)";scr.textContent="Merci !";
+    scr.style.fontSize="min(6vw,48px)";
+    scr.textContent="Merci !";
     const csv=["word;rt_ms;response;phase",...results.map(r=>
       `${r.word};${r.rt_ms};${r.response};${r.phase}`)].join("\n");
     const a=document.createElement('a');
@@ -305,11 +271,17 @@ function fin(){
     a.download="results.csv";a.textContent="Télécharger les résultats";
     a.style.fontSize="min(6vw,32px)";a.style.marginTop="30px";
     document.body.appendChild(a);
-    /* envoi Testable */
-    if(typeof parent!=="undefined") parent.postMessage({type:"SAVE_DATA",data:csv},"*");
+
+    // Sauvegarde dans Testable.org
+    if(typeof testableSubmit==="function"){
+      testableSubmit({csv});
+    }else if(typeof parent!=="undefined"){
+      parent.postMessage({type:"SAVE_DATA",data:csv},"*");
+    }
   }
 }
 
-/* -------- LANCEMENT -------- */
+/**********************************************************************
+ * 7. LANCEMENT
+ *********************************************************************/
 intro();
-</script></body></html>
