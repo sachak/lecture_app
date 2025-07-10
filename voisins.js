@@ -310,7 +310,7 @@ function endExperiment(results){
   scr.style.fontSize = "min(6vw,48px)";
   scr.textContent    = "Merci, enregistrement…";
 
-  const url = CFG.API_URL + "?code=" + encodeURIComponent(CFG.API_KEY);
+  const url = CFG.API_URL;   // sans ?code
 
   fetch(url, {
     method: "POST",
