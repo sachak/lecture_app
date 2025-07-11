@@ -2,11 +2,11 @@
   "scriptFile": "__init__.py",
   "bindings": [
     {
-      "authLevel": "function",
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "methods": [ "post", "options" ],
+      "methods": ["post", "options"],
+      "authLevel": "function",
       "route": "save_results"
     },
     {
