@@ -110,6 +110,8 @@ function pickFive(tag,feuille,used,F){
     if(tag==="LOW_PLD" && mPld>=st.m_pld20-CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(tag==="HIGH_PLD"&& mPld<=st.m_pld20+CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(!meanLpOK(samp,st) || !sdOK(samp,st,fq)) continue;
+    // ajoute le tag dans l'objet
+    samp.forEach(r=>r.groupe=tag);
     return samp;
   }
   return null;
@@ -193,12 +195,14 @@ function page_Incompatible(){
 }
 
 /* ---- Tirage auto puis instructions ---- */
+const PID = prompt("Identifiant participant :").trim().toUpperCase();
+
 let WORDS80=[];
 function startLoading(hzSel){
   setHz(hzSel);
   page.innerHTML=`<h2>Préparation…</h2><p id="stat">Tirage aléatoire des 80 mots…</p>`;
   buildSheet().then(list=>{
-    WORDS80 = list.map(r=>r.ortho);
+    WORDS80 = list.map(r=>({word:r.ortho, groupe:r.groupe, nblettres:r.nblettres}));
     page_Intro();
   }).catch(e=>{page.innerHTML='<p style="color:red">'+e+'</p>';});
 }
@@ -236,7 +240,11 @@ function runBlock(wordArr, phaseLabel, onFinish){
 
   const nextTrial = ()=>{
     if(trial>=wordArr.length){onFinish(results); return;}
-    const w=wordArr[trial], mask="#".repeat(w.length);
+    const obj=wordArr[trial];
+    const w = obj.word || obj;
+    const grp=obj.groupe || null;
+    const len=obj.nblettres || w.length;
+    const mask="#".repeat(w.length);
     scr.textContent="+"; let frame=0, active=true;
 
     const crossLoop=()=>{ if(!active) return;
@@ -267,37 +275,28 @@ function runBlock(wordArr, phaseLabel, onFinish){
         removeEventListener('keydown',trigger);
         if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
 
-        const viaPointer = e instanceof PointerEvent;
-        promptAnswer(Math.round(performance.now()-t0), w, viaPointer);
+        promptAnswer(Math.round(performance.now()-t0), w, grp, len);
       }
       addEventListener('keydown',trigger);
       if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
     }
   };
 
-  function promptAnswer(rt, currentWord, showVK){
+  function promptAnswer(rt, currentWord, grp, len){
     scr.textContent=""; ans.value=""; ans.style.display='block';
-
-    if(showVK){
-      ans.readOnly=true; buildVK(); vk.style.display='flex';
-    }else{
-      ans.readOnly=false; vk.style.display='none';
-    }
+    ans.readOnly=false; vk.style.display='none';
     setTimeout(()=>ans.focus(),40); resizeScr();
 
     function finish(){
-      ans.blur();
-      ans.removeEventListener('keydown',onEnter);
-      ans.style.display='none'; vk.style.display='none';
-      results.push({word:currentWord, rt_ms:rt,
-                    response:ans.value.trim(), phase:phaseLabel});
+      ans.blur(); ans.style.display='none';
+      results.push({
+        word:currentWord, rt_ms:rt, response:ans.value.trim(),
+        phase:phaseLabel, participant:PID,
+        groupe:grp, nblettres:len
+      });
       trial++; nextTrial();
     }
-    function onEnter(ev){
-      if(ev.key==="Enter"||ev.keyCode===13){ev.preventDefault(); finish();}
-    }
-    ans.addEventListener('keydown',onEnter);
-    window.finishAnswer = finish;           // ↵ virtuel
+    ans.onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault(); finish();} };
   }
 
   nextTrial();
@@ -307,36 +306,23 @@ function runBlock(wordArr, phaseLabel, onFinish){
  * 7. FIN D’EXPÉRIENCE — ENVOI VERS AZURE FUNCTION
  ********************************************************************/
 function endExperiment(results){
-  scr.style.fontSize = "min(6vw,48px)";
-  scr.textContent    = "Merci, enregistrement…";
+  scr.style.fontSize="min(6vw,48px)";
+  scr.textContent="Merci, enregistrement…";
 
-  const url = CFG.API_URL;   // sans ?code
-
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(CFG.API_SECRET ? {"x-api-secret": CFG.API_SECRET} : {})
+  fetch(CFG.API_URL,{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      ...(CFG.API_SECRET?{"x-api-secret":CFG.API_SECRET}:{})
     },
-    body: JSON.stringify(results)
+    body:JSON.stringify(results)
   })
-  .then(r => {
-    if (r.ok) {
-      scr.textContent = "Merci ! Vos réponses sont enregistrées.";
-    } else {
-      return r.text().then(txt=>{
-        scr.textContent = "Erreur ("+r.status+") : "+txt;
-      });
-    }
-  })
-  .catch(err => {
-    console.error(err);
-    scr.textContent = "Erreur réseau. Merci de réessayer plus tard.";
-  });
+  .then(r=>scr.textContent=r.ok?"Merci !":"Erreur "+r.status)
+  .catch(()=>scr.textContent="Erreur réseau");
 }
 
 /********************************************************************
- * 8. CLAVIER VIRTUEL
+ * 8. CLAVIER VIRTUEL (inchangé)
  ********************************************************************/
 function buildVK(){
   if(vk.firstChild) return;
@@ -348,14 +334,6 @@ function buildVK(){
       b.textContent=ch; d.appendChild(b);
     }); vk.appendChild(d);
   });
-  vk.addEventListener('pointerdown',e=>{
-    const t=e.target; if(!t.classList.contains('key')) return;
-    e.preventDefault();
-    const k=t.textContent;
-    if(k==="←") ans.value=ans.value.slice(0,-1);
-    else if(k==="↵") window.finishAnswer?.();
-    else ans.value+=k;
-  },{passive:false});
 }
 
 /********************************************************************
