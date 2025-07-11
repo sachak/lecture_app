@@ -1,75 +1,91 @@
 # ============================================================================
-# Azure Function : save_results  –  version “affiche-moi l’erreur”
+# Azure Function : save_results  –  version “montre-moi TOUT”
+#  • Affiche les erreurs d'import (pyodbc manquant, etc.)
+#  • Paramètre ?debug=1  → force le statut HTTP à 200 pour voir le corps
+#    même si l'erreur est interne
 # ============================================================================
 import os
 import json
 import logging
 import traceback
-import pyodbc
 import azure.functions as func
 
-# ----------------------------------------------------------------------------
-# 1) Objet FunctionApp (Python v2)
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 0) Tentative d'importation de pyodbc
+# ---------------------------------------------------------------------------
+try:
+    import pyodbc
+    PYODBC_IMPORT_ERROR = None
+except Exception as e:
+    # Le module n'existe pas ou autre souci → on mémorise l'erreur
+    pyodbc = None
+    PYODBC_IMPORT_ERROR = e
+
+# ---------------------------------------------------------------------------
+# 1) Objet FunctionApp
+# ---------------------------------------------------------------------------
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # 2) Variables d'environnement
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 SQL_CONN   = os.getenv("SQL_CONN")          # Chaîne de connexion OBLIGATOIRE
 API_SECRET = os.getenv("API_SECRET")        # Facultatif
 
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # 3) Route HTTP
-# ----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 @app.route(
     route="save_results",
     methods=["POST", "OPTIONS"],
     auth_level=func.AuthLevel.FUNCTION
 )
 def save_results(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    POST /api/save_results
-    • ?debug=1   → on renvoie TOUJOURS 200 pour forcer l'affichage du corps.
-    • sinon      → 400 ou 500 selon la situation normale.
-    Le corps contient systématiquement un JSON avec 'status', 'error',
-    et, en cas d'exception, 'traceback'.
-    """
+    # debug=1 → on renvoie toujours 200 pour forcer l'affichage du corps
     debug = req.params.get("debug", "0").lower() in ("1", "true")
 
-    # ------------------------------------------------------------------------
-    # A) Pré-vol CORS
-    # ------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # A) OPTIONS = pré-vol CORS
+    # -----------------------------------------------------------------------
     if req.method == "OPTIONS":
         return _cors(204, "")
 
-    logging.info("POST /save_results reçu")
+    # -----------------------------------------------------------------------
+    # B) Erreur d'import pyodbc ?
+    # -----------------------------------------------------------------------
+    if PYODBC_IMPORT_ERROR is not None:
+        return _problem(
+            500,
+            f"Cannot import pyodbc : {PYODBC_IMPORT_ERROR}",
+            debug,
+            include_trace=True
+        )
 
-    # ------------------------------------------------------------------------
-    # B) Vérification du secret (si défini)
-    # ------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # C) Secret éventuel
+    # -----------------------------------------------------------------------
     if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
         return _problem(403, "Wrong or missing x-api-secret header", debug)
 
-    # ------------------------------------------------------------------------
-    # C) Vérification de SQL_CONN
-    # ------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # D) Chaîne de connexion présente ?
+    # -----------------------------------------------------------------------
     if not SQL_CONN:
         return _problem(500, "Environment variable SQL_CONN is missing", debug)
 
-    # ------------------------------------------------------------------------
-    # D) Lecture + validation du JSON
-    # ------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # E) Lecture / validation JSON
+    # -----------------------------------------------------------------------
     try:
         data = req.get_json()
         if not isinstance(data, list):
             raise ValueError("JSON root must be a list")
-    except Exception as exc:                            # JSON invalide → 400
-        return _problem(400, f"Invalid JSON : {exc}", debug, True)
+    except Exception as exc:
+        return _problem(400, f"Invalid JSON : {exc}", debug, include_trace=True)
 
-    # ------------------------------------------------------------------------
-    # E) Insertion en base
-    # ------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # F) Insertion SQL
+    # -----------------------------------------------------------------------
     try:
         with pyodbc.connect(SQL_CONN, timeout=5) as conn:
             with conn.cursor() as cur:
@@ -87,12 +103,11 @@ def save_results(req: func.HttpRequest) -> func.HttpResponse:
                     )
             conn.commit()
 
-        logging.info("Insertion terminée")
         return _cors(200, "OK")
 
-    except Exception as exc:                            # Erreur SQL → 500
+    except Exception as exc:
         logging.exception("SQL error")
-        return _problem(500, f"DB error : {exc}", debug, True)
+        return _problem(500, f"DB error : {exc}", debug, include_trace=True)
 
 # =============================================================================
 # Fonctions utilitaires
@@ -117,16 +132,13 @@ def _cors(code: int, body: str) -> func.HttpResponse:
 def _problem(code: int,
              message: str,
              debug: bool,
-             add_trace: bool = False) -> func.HttpResponse:
-    """
-    Construit une réponse d'erreur.
-    Si ?debug=1 → on force le code HTTP à 200 pour que le navigateur
-    affiche le JSON. Sinon, on renvoie le code réel (4xx ou 5xx).
-    """
+             include_trace: bool = False) -> func.HttpResponse:
+
     body = {"status": code, "error": message}
-    if add_trace:
+    if include_trace:
         body["traceback"] = traceback.format_exc()
 
+    # Si debug=1 → on force le code HTTP à 200
     http_code = 200 if debug else code
 
     return func.HttpResponse(
