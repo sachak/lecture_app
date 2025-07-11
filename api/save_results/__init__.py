@@ -1,5 +1,5 @@
 # ============================================================================
-# Azure Function : save_results  (version "montre-moi-l'erreur")
+# Azure Function : save_results  –  version “affiche-moi l’erreur”
 # ============================================================================
 import os
 import json
@@ -9,18 +9,18 @@ import pyodbc
 import azure.functions as func
 
 # ----------------------------------------------------------------------------
-# 1. Application Functions (Python v2)
+# 1) Objet FunctionApp (Python v2)
 # ----------------------------------------------------------------------------
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 # ----------------------------------------------------------------------------
-# 2. Variables d’environnement obligatoires / facultatives
+# 2) Variables d'environnement
 # ----------------------------------------------------------------------------
-SQL_CONN   = os.getenv("SQL_CONN")          # Chaîne de connexion SQL OBLIGATOIRE
-API_SECRET = os.getenv("API_SECRET")        # Secret facultatif
+SQL_CONN   = os.getenv("SQL_CONN")          # Chaîne de connexion OBLIGATOIRE
+API_SECRET = os.getenv("API_SECRET")        # Facultatif
 
 # ----------------------------------------------------------------------------
-# 3. Route HTTP
+# 3) Route HTTP
 # ----------------------------------------------------------------------------
 @app.route(
     route="save_results",
@@ -30,53 +30,52 @@ API_SECRET = os.getenv("API_SECRET")        # Secret facultatif
 def save_results(req: func.HttpRequest) -> func.HttpResponse:
     """
     POST /api/save_results
-    Si l’URL comporte ?debug=1  →  la fonction renvoie 200 même en cas d’erreur
-    et inclut la stack-trace complète dans le corps de la réponse.
+    • ?debug=1   → on renvoie TOUJOURS 200 pour forcer l'affichage du corps.
+    • sinon      → 400 ou 500 selon la situation normale.
+    Le corps contient systématiquement un JSON avec 'status', 'error',
+    et, en cas d'exception, 'traceback'.
     """
-    # true si ?debug=1 ou ?debug=true
-    debug_requested = req.params.get("debug", "0").lower() in ("1", "true")
+    debug = req.params.get("debug", "0").lower() in ("1", "true")
 
     # ------------------------------------------------------------------------
-    # A. Pré-vol CORS (OPTIONS)
+    # A) Pré-vol CORS
     # ------------------------------------------------------------------------
     if req.method == "OPTIONS":
-        return _cors_response(204)
+        return _cors(204, "")
 
-    logging.info("Requête POST reçue sur /save_results")
+    logging.info("POST /save_results reçu")
 
     # ------------------------------------------------------------------------
-    # B. Secret éventuel
+    # B) Vérification du secret (si défini)
     # ------------------------------------------------------------------------
     if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
-        return _error(403, "Wrong or missing x-api-secret header", debug_requested)
+        return _problem(403, "Wrong or missing x-api-secret header", debug)
 
     # ------------------------------------------------------------------------
-    # C. Chaîne de connexion présente ?
+    # C) Vérification de SQL_CONN
     # ------------------------------------------------------------------------
     if not SQL_CONN:
-        return _error(500, "Environment variable SQL_CONN is missing!",
-                      debug_requested, include_trace=True)
+        return _problem(500, "Environment variable SQL_CONN is missing", debug)
 
     # ------------------------------------------------------------------------
-    # D. JSON
+    # D) Lecture + validation du JSON
     # ------------------------------------------------------------------------
     try:
         data = req.get_json()
         if not isinstance(data, list):
             raise ValueError("JSON root must be a list")
-    except Exception as exc:
-        return _error(400, f"Invalid JSON : {exc}",
-                      debug_requested, include_trace=True)
+    except Exception as exc:                            # JSON invalide → 400
+        return _problem(400, f"Invalid JSON : {exc}", debug, True)
 
     # ------------------------------------------------------------------------
-    # E. Insertion SQL
+    # E) Insertion en base
     # ------------------------------------------------------------------------
     try:
         with pyodbc.connect(SQL_CONN, timeout=5) as conn:
-            with conn.cursor() as cursor:
+            with conn.cursor() as cur:
                 for row in data:
-                    _validate_row(row)
-                    cursor.execute(
+                    _validate(row)
+                    cur.execute(
                         """
                         INSERT INTO resultats (word, rt_ms, response, phase)
                         VALUES (?, ?, ?, ?)
@@ -89,26 +88,25 @@ def save_results(req: func.HttpRequest) -> func.HttpResponse:
             conn.commit()
 
         logging.info("Insertion terminée")
-        return _cors_response(200, body="OK")
+        return _cors(200, "OK")
 
-    except Exception as exc:
-        logging.exception("Erreur SQL")
-        return _error(500, f"DB error : {exc}",
-                      debug_requested, include_trace=True)
+    except Exception as exc:                            # Erreur SQL → 500
+        logging.exception("SQL error")
+        return _problem(500, f"DB error : {exc}", debug, True)
 
 # =============================================================================
 # Fonctions utilitaires
 # =============================================================================
-def _validate_row(row: dict):
-    required = ["word", "rt_ms", "response", "phase"]
-    missing  = [k for k in required if k not in row]
-    if missing:
-        raise ValueError("Missing keys in result object: " + ", ".join(missing))
+def _validate(row: dict):
+    needed = ["word", "rt_ms", "response", "phase"]
+    miss   = [k for k in needed if k not in row]
+    if miss:
+        raise ValueError("Missing keys : " + ", ".join(miss))
 
-def _cors_response(status_code: int, body: str | None = None) -> func.HttpResponse:
+def _cors(code: int, body: str) -> func.HttpResponse:
     return func.HttpResponse(
-        body or "",
-        status_code=status_code,
+        body,
+        status_code=code,
         headers={
             "Access-Control-Allow-Origin":  "*",
             "Access-Control-Allow-Methods": "POST,OPTIONS",
@@ -116,24 +114,20 @@ def _cors_response(status_code: int, body: str | None = None) -> func.HttpRespon
         }
     )
 
-def _error(status_code: int,
-           message: str,
-           debug_requested: bool,
-           include_trace: bool = False) -> func.HttpResponse:
+def _problem(code: int,
+             message: str,
+             debug: bool,
+             add_trace: bool = False) -> func.HttpResponse:
     """
-    Construit la réponse d’erreur.
-    • Si debug_requested = True  → status_code devient 200 pour forcer l’affichage.
-    • include_trace = True       → on ajoute traceback.format_exc() dans le body.
+    Construit une réponse d'erreur.
+    Si ?debug=1 → on force le code HTTP à 200 pour que le navigateur
+    affiche le JSON. Sinon, on renvoie le code réel (4xx ou 5xx).
     """
-    body = {"status": status_code, "error": message}
-
-    if include_trace:
+    body = {"status": code, "error": message}
+    if add_trace:
         body["traceback"] = traceback.format_exc()
 
-    # —————————————
-    # Forcer 200 si le client a précisé ?debug=1
-    # —————————————
-    http_code = 200 if debug_requested else status_code
+    http_code = 200 if debug else code
 
     return func.HttpResponse(
         json.dumps(body, ensure_ascii=False, indent=2),
