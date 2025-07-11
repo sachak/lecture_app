@@ -202,7 +202,18 @@ function startLoading(hzSel){
   setHz(hzSel);
   page.innerHTML=`<h2>Préparation…</h2><p id="stat">Tirage aléatoire des 80 mots…</p>`;
   buildSheet().then(list=>{
-    WORDS80 = list.map(r=>({word:r.ortho, groupe:r.groupe, nblettres:r.nblettres}));
+    WORDS80 = list.map(r=>({
+     word            : r.ortho,
+     groupe          : r.groupe,
+     nblettres       : r.nblettres,
+     nbphons         : r.nbphons,
+     old20           : r.old20,
+     pld20           : r.pld20,
+     freqfilms2      : r.freqfilms2,
+     freqlemfilms2   : r.freqlemfilms2,
+     freqlemlivres   : r.freqlemlivres,
+     freqlivres      : r.freqlivres
+   }));
     page_Intro();
   }).catch(e=>{page.innerHTML='<p style="color:red">'+e+'</p>';});
 }
@@ -282,18 +293,24 @@ function runBlock(wordArr, phaseLabel, onFinish){
     }
   };
 
-  function promptAnswer(rt, currentWord, grp, len){
-    scr.textContent=""; ans.value=""; ans.style.display='block';
-    ans.readOnly=false; vk.style.display='none';
+  function promptAnswer(rt, obj){
+    scr.textContent = "";
+    ans.value       = "";
+    ans.style.display = 'block';
+    ans.readOnly      = false;
+    vk.style.display  = 'none';
     setTimeout(()=>ans.focus(),40); resizeScr();
-
+    
     function finish(){
       ans.blur(); ans.style.display='none';
+    
       results.push({
-        word:currentWord, rt_ms:rt, response:ans.value.trim(),
-        phase:phaseLabel, participant:PID,
-        groupe:grp, nblettres:len
-      });
+       ...obj,                       // copie word, groupe, nblettres, nbphons…
+       rt_ms      : rt,
+       response   : ans.value.trim(),
+       phase      : phaseLabel,
+       participant: PID
+     });
       trial++; nextTrial();
     }
     ans.onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault(); finish();} };
