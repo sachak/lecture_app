@@ -1,89 +1,117 @@
-# api/save_results/__init__.py   – compatible modèle v1 + Python 3.9
-import os, json, logging, traceback
+# ============================================================================
+# Azure Function : save_results
+# Enregistre les réponses expérimentales dans la base SQL Azure
+# Modèle Functions Python v2  (decorator @app.route)
+# ============================================================================
+
+import os
+import json
+import logging
+import traceback
+import pyodbc
 import azure.functions as func
 
-# ─── tentative d'import de pyodbc ────────────────────────────────────────────
-try:
-    import pyodbc
-    PYODBC_ERR = None
-except Exception as e:
-    pyodbc, PYODBC_ERR = None, e          # on mémorise l’erreur
+# ----------------------------------------------------------------------------
+# 1. Création de l’application Functions
+# ----------------------------------------------------------------------------
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
-# ─── variables d’environnement ───────────────────────────────────────────────
-SQL_CONN   = os.getenv("SQL_CONN")         # obligatoire
-API_SECRET = os.getenv("API_SECRET")       # facultatif
+# ----------------------------------------------------------------------------
+# 2. Variables d’environnement
+# ----------------------------------------------------------------------------
+SQL_CONN   = os.getenv("SQL_CONN")        # chaîne ODBC complète (obligatoire)
+API_SECRET = os.getenv("API_SECRET")      # x-api-secret attendu (facultatif)
 
-# ─── point d’entrée v1 :  def main(req: func.HttpRequest) ───────────────────
-def main(req: func.HttpRequest) -> func.HttpResponse:
+# ----------------------------------------------------------------------------
+# 3. Point d’entrée HTTP
+# ----------------------------------------------------------------------------
+@app.route(
+    route="save_results",                 # URL : /api/save_results
+    methods=["POST", "OPTIONS"],
+    auth_level=func.AuthLevel.FUNCTION
+)
+def save_results(req: func.HttpRequest) -> func.HttpResponse:
     """
-    POST /api/save_results
-    OPTIONS pour CORS
-    Ajoutez ?debug=1 pour forcer le statut HTTP à 200 et voir le corps.
+    Reçoit un tableau JSON d’objets :
+        [{ "word": "...", "rt_ms": 123, "response": "...", "phase": "..." }, …]
+    Insère chaque ligne dans dbo.resultats.
     """
-    debug = req.params.get("debug", "0").lower() in ("1", "true")
 
-    if req.method == "OPTIONS":                       # pré-vol CORS
-        return _cors(204, "")
+    # --------------------------------------------------------------------- A.
+    # Pré–vol CORS  (méthode OPTIONS)
+    # -------------------------------------------------------------------------
+    if req.method == "OPTIONS":
+        return func.HttpResponse(
+            status_code=204,
+            headers={
+                "Access-Control-Allow-Origin":  "*",
+                "Access-Control-Allow-Methods": "POST,OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type,x-api-secret",
+            },
+        )
 
-    # 1) pyodbc absent → on l'indique clairement
-    if PYODBC_ERR:
-        return _problem(500, f"Import pyodbc failed : {PYODBC_ERR}",
-                        debug, trace=True)
+    logging.info("POST /save_results reçu")
 
-    # 2) secret incorrect
-    if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
-        return _problem(403, "Wrong or missing x-api-secret header", debug)
+    # --------------------------------------------------------------------- B.
+    # Vérification éventuelle du header x-api-secret
+    # -------------------------------------------------------------------------
+    if API_SECRET:
+        if req.headers.get("x-api-secret") != API_SECRET:
+            logging.warning("x-api-secret incorrect ou manquant")
+            return func.HttpResponse(
+                "Forbidden",
+                status_code=403,
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
 
-    # 3) chaîne SQL manquante
-    if not SQL_CONN:
-        return _problem(500, "Environment variable SQL_CONN missing", debug)
-
-    # 4) JSON
+    # --------------------------------------------------------------------- C.
+    # Lecture + validation du corps JSON
+    # -------------------------------------------------------------------------
     try:
         data = req.get_json()
         if not isinstance(data, list):
-            raise ValueError("JSON root must be a list")
+            raise ValueError("Le JSON racine doit être une liste")
     except Exception as exc:
-        return _problem(400, f"Invalid JSON : {exc}", debug, trace=True)
+        logging.error("JSON invalide : %s", exc, exc_info=True)
+        return func.HttpResponse(
+            f"Invalid JSON : {exc}",
+            status_code=400,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
 
-    # 5) insertion SQL
+    # --------------------------------------------------------------------- D.
+    # Insertion en base
+    # -------------------------------------------------------------------------
     try:
-        with pyodbc.connect(SQL_CONN, timeout=5) as cnx, cnx.cursor() as cur:
-            for row in data:
-                _check(row)
-                cur.execute(
-                    "INSERT INTO resultats (word, rt_ms, response, phase) "
-                    "VALUES (?,?,?,?)",
-                    row["word"], int(row["rt_ms"]),
-                    row["response"], row["phase"])
-            cnx.commit()
-        return _cors(200, "OK")
+        with pyodbc.connect(SQL_CONN, timeout=10) as conn:
+            with conn.cursor() as cur:
+                for row in data:
+                    cur.execute(
+                        """
+                        INSERT INTO dbo.resultats (word, rt_ms, response, phase)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        row.get("word", ""),
+                        int(row.get("rt_ms", 0)),
+                        row.get("response", ""),
+                        row.get("phase", ""),
+                    )
+            conn.commit()
 
+        logging.info("Insertion terminée avec succès")
+        return func.HttpResponse(
+            "OK",
+            status_code=200,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    # --------------------------------------------------------------------- E.
+    # Gestion des erreurs SQL
+    # -------------------------------------------------------------------------
     except Exception as exc:
-        logging.exception("SQL error")
-        return _problem(500, f"DB error : {exc}", debug, trace=True)
-
-# ─── petites fonctions utilitaires ───────────────────────────────────────────
-def _check(r):
-    need = ["word", "rt_ms", "response", "phase"]
-    miss = [k for k in need if k not in r]
-    if miss:
-        raise ValueError("Missing keys: " + ", ".join(miss))
-
-def _cors(code, body=""):
-    return func.HttpResponse(
-        body, status_code=code,
-        headers={"Access-Control-Allow-Origin":"*",
-                 "Access-Control-Allow-Methods":"POST,OPTIONS",
-                 "Access-Control-Allow-Headers":"Content-Type,x-api-secret"})
-
-def _problem(code, msg, dbg, trace=False):
-    body = {"status": code, "error": msg}
-    if trace:
-        body["traceback"] = traceback.format_exc()
-    http_code = 200 if dbg else code
-    return func.HttpResponse(
-        json.dumps(body, indent=2, ensure_ascii=False),
-        status_code=http_code,
-        mimetype="application/json",
-        headers={"Access-Control-Allow-Origin":"*"})
+        logging.exception("Erreur SQL")
+        return func.HttpResponse(
+            f"DB error : {exc}",
+            status_code=500,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
