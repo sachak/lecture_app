@@ -1,3 +1,17 @@
+try:
+    import pandas as pd
+    import pyodbc
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+except Exception as e:
+    import azure.functions as func, json
+    def main(req: func.HttpRequest):
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=200,
+            mimetype="application/json"
+        )
+import os, io, json, logging, traceback
+
 import os, io, json, logging, traceback
 import pandas as pd
 import pyodbc
