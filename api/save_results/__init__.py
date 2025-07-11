@@ -1,16 +1,16 @@
-import os, io, json, logging, traceback      # ← ajout de traceback
+import os, io, json, logging, traceback
 import pandas as pd
 import pyodbc
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
-# ─── variables d’environnement ──────────────────────────────────────────
+# - variables d’environnement -
 SQL_CONN   = os.getenv("SQL_CONN")
 API_SECRET = os.getenv("API_SECRET")
 STO_CONN   = os.getenv("STORAGE_CONN")
 STO_CONT   = os.getenv("STORAGE_CONTAINER", "results")
 
-# ─── helpers ────────────────────────────────────────────────────────────
+# - helpers -
 def letters_block(n: int) -> str:
     if n in (4, 5):  return "4_5"
     if n in (6, 7):  return "6_7"
@@ -23,29 +23,34 @@ def _cors():
       "Access-Control-Allow-Methods":"POST,OPTIONS",
       "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
     }
-
 def http_resp(code:int, body:str=""):
     return func.HttpResponse(body, status_code=code, headers=_cors())
 
+# - version robuste, safe pour NaN et groupes vides -
 def build_stats(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
-    numeric = [c for c in df.select_dtypes('number').columns if c not in by and c!="rt_ms"]
+    numeric = [c for c in df.select_dtypes('number').columns if c not in by and c != "rt_ms"]
+    # Si DataFrame vide, renvoie DataFrame vide bien structurée :
+    if df.empty or not numeric:
+        cols = by + ['n'] + [f"{col}_mean" for col in numeric] + [f"{col}_sd" for col in numeric]
+        return pd.DataFrame(columns=cols)
     agg = {"n": ("rt_ms", "count")}
     for col in numeric:
         agg[f"{col}_mean"] = (col, "mean")
         agg[f"{col}_sd"]   = (col, "std")
-    return df.groupby(by).agg(**agg).reset_index()
+    try:
+        stat = df.groupby(by).agg(**agg).reset_index()
+    except Exception as e:
+        stat = df.groupby(by)["rt_ms"].count().reset_index(name="n")
+    return stat
 
-# ─── Function entry point (v1) ──────────────────────────────────────────
 def main(req: func.HttpRequest) -> func.HttpResponse:
     debug = req.params.get("debug","").lower() in ("1","true")
 
     try:
         if req.method == "OPTIONS":
             return http_resp(204)
-
         if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
             return http_resp(403,"Forbidden")
-
         data = req.get_json()
         if not isinstance(data, list):
             raise ValueError("JSON root must be list")
@@ -53,7 +58,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             raise ValueError("participant missing")
         pid = str(data[0]["participant"]).strip() or "anon"
 
-        # Insertion SQL ----------------------------------------------------
+        # Insertion SQL ------------------------------
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
             for r in data:
                 cur.execute("""
@@ -70,7 +75,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                   r.get("nblettres"))
             cnx.commit()
 
-        # DataFrame --------------------------------------------------------
+        # DataFrame / Statistiques --------------------
         df = pd.DataFrame(data)
         df = df[df.phase!="practice"].copy()
         if df.empty:
@@ -80,15 +85,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         stats_grp = build_stats(df, ["groupe"])
         stats_blk = build_stats(df, ["letters_block"])
 
-        # Excel ------------------------------------------------------------
+        # Excel en mémoire ----------------------------
         buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as wr:
-            df         .to_excel(wr,"tirage",          index=False)
-            stats_grp  .to_excel(wr,"Stats_ByGroup",   index=False)
-            stats_blk  .to_excel(wr,"Stats_ByLetters", index=False)
-        buf.seek(0)
+        try:
+            with pd.ExcelWriter(buf, engine="openpyxl") as wr:
+                df.to_excel(wr,"tirage",          index=False)
+                stats_grp.to_excel(wr,"Stats_ByGroup",   index=False)
+                stats_blk.to_excel(wr,"Stats_ByLetters", index=False)
+            buf.seek(0)
+        except Exception as exc:
+            logging.exception("Excel build failed")
+            if debug:
+                body=json.dumps({
+                    "status":500,
+                    "error": str(exc),
+                    "traceback": traceback.format_exc()
+                }, indent=2)
+                return func.HttpResponse(body, status_code=200,
+                    mimetype="application/json", headers=_cors())
+            return http_resp(500)
 
-        # Upload Blob ------------------------------------------------------
+        # Upload Blob ----------------------------------
         bs  = BlobServiceClient.from_connection_string(STO_CONN)
         cnt = bs.get_container_client(STO_CONT)
         cnt.upload_blob(f"{pid}_results.xlsx", buf.getvalue(),
