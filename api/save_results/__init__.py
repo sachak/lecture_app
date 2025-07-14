@@ -1,59 +1,34 @@
-# tout en haut du fichier
-logging.basicConfig(level=logging.INFO)
-
-…
-
-# juste après rows_main =
-rows_main = [r for r in data if r.get("phase") != "practice"]
-logging.info("Reçu %s lignes, dont %s lignes test",
-             len(data), len(rows_main))
-
-…
-
-# juste après cnx.commit()
-logging.info("INSERT OK – %s lignes écrites en SQL", len(rows_main))
-
-…
-
-# juste avant buf = io.BytesIO()
-logging.info("Calcul stats : %s colonnes numériques, %s lignes",
-             len(num_cols), len(df))
-
-…
-
-# juste après cnt.upload_blob(...)
-logging.info("Blob %s_results.xlsx uploadé dans %s",
-             pid, STO_CONT)
-
 import os, io, logging
 import pandas as pd
 import pyodbc
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
-# ─── variables d’environnement ──────────────────────────────────────────
+# ─── CONFIG ────────────────────────────────────────────────────────────
 SQL_CONN   = os.getenv("SQL_CONN")                   # chaîne ODBC
 API_SECRET = os.getenv("API_SECRET")                 # header x-api-secret
 STO_CONN   = os.getenv("STORAGE_CONN")               # chaîne connexion Storage
 STO_CONT   = os.getenv("STORAGE_CONTAINER", "results")
 
-# ─── helpers ────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO)
+
+# ─── HELPERS ───────────────────────────────────────────────────────────
 def letters_block(n: int) -> str:
-    if n in (4, 5): return "4_5"
-    if n in (6, 7): return "6_7"
-    if n in (8, 9): return "8_9"
+    if n in (4, 5):  return "4_5"
+    if n in (6, 7):  return "6_7"
+    if n in (8, 9):  return "8_9"
     return "10_11"
 
 def http_resp(code: int, body: str = "") -> func.HttpResponse:
     return func.HttpResponse(
         body, status_code=code,
         headers={
-            "Access-Control-Allow-Origin" : "*",
-            "Access-Control-Allow-Methods": "POST,OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type,x-api-secret"
+          "Access-Control-Allow-Origin":"*",
+          "Access-Control-Allow-Methods":"POST,OPTIONS",
+          "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
         })
 
-# ─── Function entry point ───────────────────────────────────────────────
+# ─── FUNCTION ENTRY POINT ──────────────────────────────────────────────
 def main(req: func.HttpRequest) -> func.HttpResponse:
 
     if req.method == "OPTIONS":
@@ -62,6 +37,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
         return http_resp(403, "Forbidden")
 
+    # ---- JSON ---------------------------------------------------------
     try:
         data = req.get_json()
         if not isinstance(data, list):
@@ -74,10 +50,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     pid = str(data[0]["participant"]).strip() or "anon"
 
-    # ─── 1. Lignes test uniquement ─────────────────────────────────────
+    # ---- Sépare entraînement / test -----------------------------------
     rows_main = [r for r in data if r.get("phase") != "practice"]
+    logging.info("Reçu %s lignes, dont %s lignes test", len(data), len(rows_main))
 
-    # ─── 2. INSERTION SQL ──────────────────────────────────────────────
+    # ---- INSERT SQL ---------------------------------------------------
     try:
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
             for r in rows_main:
@@ -96,17 +73,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     r.get("groupe", ""),
                     r.get("nblettres"))
             cnx.commit()
+        logging.info("INSERT OK – %s lignes écrites", len(rows_main))
     except Exception as exc:
         logging.exception("SQL insert")
         return http_resp(500, f"DB error : {exc}")
 
-    # ─── 3. STATISTIQUES ───────────────────────────────────────────────
-    df = pd.DataFrame(rows_main)
-    if df.empty:                    # seulement practice
+    # ---- Aucune ligne test ?  on s’arrête là --------------------------
+    if not rows_main:
         return http_resp(200, "OK (practice only)")
 
+    # ---- STATISTIQUES -------------------------------------------------
+    df = pd.DataFrame(rows_main)
+
     if "nblettres" not in df.columns:
-        logging.warning("nblettres absent ; stats ignorées.")
+        logging.warning("nblettres absent : stats ignorées.")
         return http_resp(200, "OK (saved)")
 
     df["letters_block"] = df["nblettres"].apply(letters_block)
@@ -131,7 +111,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                           else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
                          for c in stats_blk.columns]
 
-    # ─── 4. Excel en mémoire ───────────────────────────────────────────
+    logging.info("Stats calculées : %s lignes, %s colonnes numériques",
+                 len(df), len(num))
+
+    # ---- Excel en mémoire --------------------------------------------
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as wr:
         df.to_excel       (wr, "tirage"         , index=False)
@@ -139,7 +122,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         stats_blk.to_excel(wr, "Stats_ByLetters", index=False)
     buf.seek(0)
 
-    # ─── 5. Upload Blob ────────────────────────────────────────────────
+    # ---- Upload Blob --------------------------------------------------
     try:
         bs  = BlobServiceClient.from_connection_string(STO_CONN)
         cnt = bs.get_container_client(STO_CONT)
@@ -150,6 +133,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             content_settings=ContentSettings(
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         )
+        logging.info("Blob %s_results.xlsx uploadé dans %s", pid, STO_CONT)
     except Exception as exc:
         logging.exception("Blob upload")
         return http_resp(500, f"Blob error : {exc}")
