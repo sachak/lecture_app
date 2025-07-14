@@ -27,18 +27,7 @@ const CFG = {
   API_KEY   : "",
   API_SECRET: "udzKkYgnwQnfs7LW2Oi3xwgfhDhYiucZaXZrV4sY"
 };
-/********************************************************************
- * 0.b  IDENTIFIANT ALÉATOIRE  (6 caractères ici)
- ********************************************************************/
-function genPID(len = 6){                       // ← changez 6 → 8 si vous préférez 8
-  const a = new Uint32Array(4);                 // 128 bits aléatoires
-  crypto.getRandomValues(a);
-  return [...a].map(n => n.toString(36).padStart(7,'0'))
-               .join('')
-               .slice(0,len)                    // longueur souhaitée
-               .toUpperCase();
-}
-const PID = genPID();                           // ← PID est créé une seule fois
+
 /********************************************************************
  * 1. OUTILS GÉNÉRAUX
  ********************************************************************/
@@ -206,7 +195,7 @@ function page_Incompatible(){
 }
 
 /* ---- Tirage auto puis instructions ---- */
-
+const PID = prompt("Identifiant participant :").trim().toUpperCase();
 
 let WORDS80=[];
 function startLoading(hzSel){
