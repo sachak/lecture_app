@@ -26,14 +26,14 @@ def http_resp(code: int, body: str = "") -> func.HttpResponse:
           "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
         })
 
-# ─── Function entry point (v1) ──────────────────────────────────────────
+# ─── Function entry point ───────────────────────────────────────────────
 def main(req: func.HttpRequest) -> func.HttpResponse:
 
     # CORS pré-vol
     if req.method == "OPTIONS":
         return http_resp(204)
 
-    # Secret
+    # Authentification secret
     if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
         return http_resp(403, "Forbidden")
 
@@ -50,10 +50,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     pid = str(data[0]["participant"]).strip() or "anon"
 
-    # ─── insertion SQL ────────────────────────────────────────────────
+    # ─── Filtrer les essais test uniquement (pas practice) ───────
+    test_data = [r for r in data if r.get("phase") != "practice"]
+
+    if not test_data:
+        return http_resp(200, "OK (practice only)")
+
+    # ─── insertion SQL (seulement le test) ────────────────────────
     try:
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
-            for r in data:
+            for r in test_data:
                 cur.execute(
                     """
                     INSERT INTO dbo.resultats
@@ -61,12 +67,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                        participant, groupe, nblettres)
                     VALUES (?,?,?,?,?,?,?)
                     """,
-                    r.get("word",""),
-                    int(r.get("rt_ms",0)),
-                    r.get("response",""),
-                    r.get("phase",""),
-                    r.get("participant",""),
-                    r.get("groupe",""),
+                    r.get("word", ""),
+                    int(r.get("rt_ms", 0)),
+                    r.get("response", ""),
+                    r.get("phase", ""),
+                    r.get("participant", ""),
+                    r.get("groupe", ""),
                     r.get("nblettres")
                 )
             cnx.commit()
@@ -74,31 +80,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("SQL insert")
         return http_resp(500, f"DB error : {exc}")
 
-    # ─── création DataFrame hors practice ─────────────────────────────
-    df = pd.DataFrame(data)
-    df = df[df.phase != "practice"].copy()
-    if df.empty:
-        return http_resp(200, "OK (practice only)")
-
+    # ─── création DataFrame (for .xlsx & stats, hors practice) ─────
+    df = pd.DataFrame(test_data)
     df["letters_block"] = df["nblettres"].apply(letters_block)
 
-    stats_grp = (df.groupby("groupe")["rt_ms"]
-                   .agg(['count','mean','std']).reset_index()
-                   .rename(columns={'count':'n','mean':'rt_mean','std':'rt_sd'}))
+    stats_grp = (
+        df.groupby("groupe")["rt_ms"]
+        .agg(['count', 'mean', 'std']).reset_index()
+        .rename(columns={'count':'n','mean':'rt_mean','std':'rt_sd'})
+    )
 
-    stats_blk = (df.groupby("letters_block")["rt_ms"]
-                   .agg(['count','mean','std']).reset_index()
-                   .rename(columns={'count':'n','mean':'rt_mean','std':'rt_sd'}))
+    stats_blk = (
+        df.groupby("letters_block")["rt_ms"]
+        .agg(['count', 'mean', 'std']).reset_index()
+        .rename(columns={'count':'n','mean':'rt_mean','std':'rt_sd'})
+    )
 
-    # ─── Excel en mémoire ─────────────────────────────────────────────
+    # ─── Excel en mémoire ──────────────────────────────────────────
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as wr:
-        df.to_excel      (wr, sheet_name="tirage",          index=False)
-        stats_grp.to_excel(wr, sheet_name="Stats_ByGroup",   index=False)
+        df.to_excel(wr, sheet_name="tirage", index=False)
+        stats_grp.to_excel(wr, sheet_name="Stats_ByGroup", index=False)
         stats_blk.to_excel(wr, sheet_name="Stats_ByLetters", index=False)
     buf.seek(0)
 
-    # ─── upload Blob  (un fichier par participant) ───────────────────
+    # ─── upload Blob (un fichier par participant) ──────────────────
     try:
         bs  = BlobServiceClient.from_connection_string(STO_CONN)
         cnt = bs.get_container_client(STO_CONT)
@@ -107,8 +113,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             data = buf.getvalue(),
             overwrite = True,
             content_settings = ContentSettings(
-              content_type=("application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"))
+              content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              )
+            )
         )
     except Exception as exc:
         logging.exception("Blob upload")
