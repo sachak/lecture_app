@@ -1,43 +1,40 @@
-import os, io, json, logging
+import os, io, logging
 import pandas as pd
 import pyodbc
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
 # ─── variables d’environnement ──────────────────────────────────────────
-SQL_CONN    = os.getenv("SQL_CONN")                  # chaîne ODBC
-API_SECRET  = os.getenv("API_SECRET")                # header x-api-secret
-STO_CONN    = os.getenv("STORAGE_CONN")              # chaîne connexion Storage
-STO_CONT    = os.getenv("STORAGE_CONTAINER", "results")
+SQL_CONN   = os.getenv("SQL_CONN")                   # chaîne ODBC
+API_SECRET = os.getenv("API_SECRET")                 # header x-api-secret
+STO_CONN   = os.getenv("STORAGE_CONN")               # chaîne connexion Storage
+STO_CONT   = os.getenv("STORAGE_CONTAINER", "results")
 
 # ─── helpers ────────────────────────────────────────────────────────────
 def letters_block(n: int) -> str:
-    if n in (4, 5):  return "4_5"
-    if n in (6, 7):  return "6_7"
-    if n in (8, 9):  return "8_9"
+    if n in (4, 5): return "4_5"
+    if n in (6, 7): return "6_7"
+    if n in (8, 9): return "8_9"
     return "10_11"
 
 def http_resp(code: int, body: str = "") -> func.HttpResponse:
     return func.HttpResponse(
         body, status_code=code,
         headers={
-          "Access-Control-Allow-Origin":"*",
-          "Access-Control-Allow-Methods":"POST,OPTIONS",
-          "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
+            "Access-Control-Allow-Origin" : "*",
+            "Access-Control-Allow-Methods": "POST,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type,x-api-secret"
         })
 
 # ─── Function entry point ───────────────────────────────────────────────
 def main(req: func.HttpRequest) -> func.HttpResponse:
 
-    # CORS pré-vol
     if req.method == "OPTIONS":
         return http_resp(204)
 
-    # Secret
     if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
         return http_resp(403, "Forbidden")
 
-    # Lecture JSON
     try:
         data = req.get_json()
         if not isinstance(data, list):
@@ -50,10 +47,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     pid = str(data[0]["participant"]).strip() or "anon"
 
-    # ─── 1. Séparer entraînement / test ────────────────────────────────
+    # ─── 1. Lignes test uniquement ─────────────────────────────────────
     rows_main = [r for r in data if r.get("phase") != "practice"]
 
-    # ─── 2. INSERTION SQL (seulement les lignes test) ─────────────────
+    # ─── 2. INSERTION SQL ──────────────────────────────────────────────
     try:
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
             for r in rows_main:
@@ -76,45 +73,38 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("SQL insert")
         return http_resp(500, f"DB error : {exc}")
 
-    # ─── 3. STATISTIQUES (uniquement si données test) ────────────────
+    # ─── 3. STATISTIQUES ───────────────────────────────────────────────
     df = pd.DataFrame(rows_main)
-    if df.empty:
+    if df.empty:                    # seulement practice
         return http_resp(200, "OK (practice only)")
 
     if "nblettres" not in df.columns:
-        logging.warning("Colonne nblettres absente : statistiques ignorées.")
+        logging.warning("nblettres absent ; stats ignorées.")
         return http_resp(200, "OK (saved)")
 
     df["letters_block"] = df["nblettres"].apply(letters_block)
 
-    META_COLS = {"word", "response", "phase",
-                 "participant", "groupe", "letters_block"}
-    num_cols  = [c for c in df.columns
-                 if c not in META_COLS and pd.api.types.is_numeric_dtype(df[c])]
+    META = {"word","response","phase","participant","groupe","letters_block"}
+    num  = [c for c in df.columns
+            if c not in META and pd.api.types.is_numeric_dtype(df[c])]
 
-    # par groupe -------------------------------------------------------
-    g_grp      = df.groupby("groupe")
-    stats_grp  = g_grp[num_cols].agg(['mean', 'std'])
+    g_grp = df.groupby("groupe")
+    stats_grp = g_grp[num].agg(['mean','std'])
     stats_grp.insert(0, 'n', g_grp.size())
-    stats_grp  = stats_grp.reset_index()
-    stats_grp.columns = [
-        (c if isinstance(c, str)
-           else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
-        for c in stats_grp.columns
-    ]
+    stats_grp = stats_grp.reset_index()
+    stats_grp.columns = [(c if isinstance(c,str)
+                          else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
+                         for c in stats_grp.columns]
 
-    # par bloc de lettres ---------------------------------------------
-    g_blk      = df.groupby("letters_block")
-    stats_blk  = g_blk[num_cols].agg(['mean', 'std'])
+    g_blk = df.groupby("letters_block")
+    stats_blk = g_blk[num].agg(['mean','std'])
     stats_blk.insert(0, 'n', g_blk.size())
-    stats_blk  = stats_blk.reset_index()
-    stats_blk.columns = [
-        (c if isinstance(c, str)
-           else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
-        for c in stats_blk.columns
-    ]
+    stats_blk = stats_blk.reset_index()
+    stats_blk.columns = [(c if isinstance(c,str)
+                          else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
+                         for c in stats_blk.columns]
 
-    # ─── 4. Excel en mémoire ─────────────────────────────────────────
+    # ─── 4. Excel en mémoire ───────────────────────────────────────────
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as wr:
         df.to_excel       (wr, "tirage"         , index=False)
@@ -122,7 +112,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         stats_blk.to_excel(wr, "Stats_ByLetters", index=False)
     buf.seek(0)
 
-    # ─── 5. Upload Blob ──────────────────────────────────────────────
+    # ─── 5. Upload Blob ────────────────────────────────────────────────
     try:
         bs  = BlobServiceClient.from_connection_string(STO_CONN)
         cnt = bs.get_container_client(STO_CONT)
