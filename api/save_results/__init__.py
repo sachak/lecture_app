@@ -26,7 +26,7 @@ def http_resp(code: int, body: str = "") -> func.HttpResponse:
           "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
         })
 
-# ─── Function entry point (v1) ──────────────────────────────────────────
+# ─── Function entry point ───────────────────────────────────────────────
 def main(req: func.HttpRequest) -> func.HttpResponse:
 
     # CORS pré-vol
@@ -50,10 +50,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     pid = str(data[0]["participant"]).strip() or "anon"
 
-    # ─── insertion SQL ────────────────────────────────────────────────
+    # ─── 1. Séparer entraînement / test ────────────────────────────────
+    rows_main = [r for r in data if r.get("phase") != "practice"]
+
+    # ─── 2. INSERTION SQL (seulement les lignes test) ─────────────────
     try:
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
-            for r in data:
+            for r in rows_main:
                 cur.execute(
                     """
                     INSERT INTO dbo.resultats
@@ -61,38 +64,39 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                        participant, groupe, nblettres)
                     VALUES (?,?,?,?,?,?,?)
                     """,
-                    r.get("word",""),
-                    int(r.get("rt_ms",0)),
-                    r.get("response",""),
-                    r.get("phase",""),
-                    r.get("participant",""),
-                    r.get("groupe",""),
-                    r.get("nblettres")
-                )
+                    r.get("word", ""),
+                    int(r.get("rt_ms", 0)),
+                    r.get("response", ""),
+                    r.get("phase", ""),
+                    r.get("participant", ""),
+                    r.get("groupe", ""),
+                    r.get("nblettres"))
             cnx.commit()
     except Exception as exc:
         logging.exception("SQL insert")
         return http_resp(500, f"DB error : {exc}")
 
-    # ─── création DataFrame hors practice ─────────────────────────────
-    df = pd.DataFrame(data)
-    df = df[df.phase != "practice"].copy()
+    # ─── 3. STATISTIQUES (uniquement si données test) ────────────────
+    df = pd.DataFrame(rows_main)
     if df.empty:
         return http_resp(200, "OK (practice only)")
 
+    if "nblettres" not in df.columns:
+        logging.warning("Colonne nblettres absente : statistiques ignorées.")
+        return http_resp(200, "OK (saved)")
+
     df["letters_block"] = df["nblettres"].apply(letters_block)
 
-
-    # ─── NOUVEAU BLOC STATISTIQUES (remplace les 2 lignes d’origine) ──
-    META_COLS = {"word","response","phase","participant","groupe","letters_block"}
+    META_COLS = {"word", "response", "phase",
+                 "participant", "groupe", "letters_block"}
     num_cols  = [c for c in df.columns
                  if c not in META_COLS and pd.api.types.is_numeric_dtype(df[c])]
 
     # par groupe -------------------------------------------------------
-    g_grp = df.groupby("groupe")
-    stats_grp = g_grp[num_cols].agg(['mean','std'])
+    g_grp      = df.groupby("groupe")
+    stats_grp  = g_grp[num_cols].agg(['mean', 'std'])
     stats_grp.insert(0, 'n', g_grp.size())
-    stats_grp = stats_grp.reset_index()
+    stats_grp  = stats_grp.reset_index()
     stats_grp.columns = [
         (c if isinstance(c, str)
            else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
@@ -100,37 +104,34 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     ]
 
     # par bloc de lettres ---------------------------------------------
-    g_blk = df.groupby("letters_block")
-    stats_blk = g_blk[num_cols].agg(['mean','std'])
+    g_blk      = df.groupby("letters_block")
+    stats_blk  = g_blk[num_cols].agg(['mean', 'std'])
     stats_blk.insert(0, 'n', g_blk.size())
-    stats_blk = stats_blk.reset_index()
+    stats_blk  = stats_blk.reset_index()
     stats_blk.columns = [
         (c if isinstance(c, str)
            else f"{c[0]}_{'mean' if c[1]=='mean' else 'sd'}")
         for c in stats_blk.columns
     ]
-    # ──────────────────────────────────────────────────────────────────
 
-
-    # ─── Excel en mémoire ─────────────────────────────────────────────
+    # ─── 4. Excel en mémoire ─────────────────────────────────────────
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as wr:
-        df.to_excel      (wr, sheet_name="tirage",          index=False)
-        stats_grp.to_excel(wr, sheet_name="Stats_ByGroup",   index=False)
-        stats_blk.to_excel(wr, sheet_name="Stats_ByLetters", index=False)
+        df.to_excel       (wr, "tirage"         , index=False)
+        stats_grp.to_excel(wr, "Stats_ByGroup"  , index=False)
+        stats_blk.to_excel(wr, "Stats_ByLetters", index=False)
     buf.seek(0)
 
-    # ─── upload Blob  (un fichier par participant) ───────────────────
+    # ─── 5. Upload Blob ──────────────────────────────────────────────
     try:
         bs  = BlobServiceClient.from_connection_string(STO_CONN)
         cnt = bs.get_container_client(STO_CONT)
         cnt.upload_blob(
-            name = f"{pid}_results.xlsx",
-            data = buf.getvalue(),
-            overwrite = True,
-            content_settings = ContentSettings(
-              content_type=("application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"))
+            name            = f"{pid}_results.xlsx",
+            data            = buf.getvalue(),
+            overwrite       = True,
+            content_settings=ContentSettings(
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         )
     except Exception as exc:
         logging.exception("Blob upload")
