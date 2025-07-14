@@ -4,13 +4,13 @@ import pyodbc
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
-# ─── variables d’environnement ──────────────────────────────────────────
-SQL_CONN   = os.getenv("SQL_CONN")                   # chaîne ODBC
+# ─── Variables d’environnement ──────────────────────────────────────────
+SQL_CONN   = os.getenv("SQL_CONN")                   # Chaîne ODBC
 API_SECRET = os.getenv("API_SECRET")                 # header x-api-secret
-STO_CONN   = os.getenv("STORAGE_CONN")               # chaîne connexion Storage
+STO_CONN   = os.getenv("STORAGE_CONN")               # Chaîne connexion Storage
 STO_CONT   = os.getenv("STORAGE_CONTAINER", "results")
 
-# ─── helpers ────────────────────────────────────────────────────────────
+# ─── Helpers ────────────────────────────────────────────────────────────
 def letters_block(n: int) -> str:
     if n in (4, 5):  return "4_5"
     if n in (6, 7):  return "6_7"
@@ -18,6 +18,9 @@ def letters_block(n: int) -> str:
     return "10_11"
 
 def http_resp(code: int, body: str = "") -> func.HttpResponse:
+    # on journalise systématiquement le texte pour les erreurs ≥400
+    if code >= 400:
+        logging.error(body or f"HTTP {code}")
     return func.HttpResponse(
         body, status_code=code,
         headers={
@@ -48,19 +51,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if not data or "participant" not in data[0]:
         return http_resp(400, "participant missing")
 
-    # Validation stricte de nblettres
+    pid = str(data[0]["participant"]).strip() or "anon"
+
+    # ─── Vérif stricte : nblettres doit exister pour chaque essai test ──
     for i, r in enumerate(data, 1):
         if r.get("phase") != "practice" and r.get("nblettres") in (None, ""):
             return http_resp(400, f"nblettres missing in item {i}")
-
-    pid = str(data[0]["participant"]).strip() or "anon"
 
     # ─── Garder uniquement la phase test ────────────────────────────────
     test_data = [r for r in data if r.get("phase") != "practice"]
     if not test_data:
         return http_resp(200, "OK (practice only)")
 
-    # ─── insertion SQL ──────────────────────────────────────────────────
+    # ─── Insertion SQL ──────────────────────────────────────────────────
     try:
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
             for r in test_data:
@@ -71,12 +74,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                        participant, groupe, nblettres)
                     VALUES (?,?,?,?,?,?,?)
                     """,
-                    r.get("word", ""),
-                    int(r.get("rt_ms", 0)),
-                    r.get("response", ""),
-                    r.get("phase", ""),
-                    r.get("participant", ""),
-                    r.get("groupe", ""),
+                    r.get("word",""),
+                    int(r.get("rt_ms",0)),
+                    r.get("response",""),
+                    r.get("phase",""),
+                    r.get("participant",""),
+                    r.get("groupe",""),
                     int(r["nblettres"])
                 )
             cnx.commit()
@@ -88,63 +91,57 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     df = pd.DataFrame(test_data)
     df["letters_block"] = df["nblettres"].apply(letters_block)
 
-    # Colonnes numériques prévues
-    num_cols = [
-        "rt_ms", "nblettres", "nbphons", "old20", "pld20",
-        "freqfilms2", "freqlemfilms2", "freqlemlivres", "freqlivres"
-    ]
-
-    # ── Stats par groupe ────────────────────────────────────────────────
+    # ─── Stats ByGroup ─────────────────────────────────────────────────
     stats_grp = (
         df.groupby("groupe")
           .agg(
-              n_sd              = ('rt_ms',      'count'),
-              rt_ms_mean        = ('rt_ms',      'mean'),
-              rt_ms_sd          = ('rt_ms',      'std'),
-              nblettres_mean    = ('nblettres',  'mean'),
-              nblettres_sd      = ('nblettres',  'std'),
-              nbphons_mean      = ('nbphons',    'mean'),
-              nbphons_sd        = ('nbphons',    'std'),
-              old20_mean        = ('old20',      'mean'),
-              old20_sd          = ('old20',      'std'),
-              pld20_mean        = ('pld20',      'mean'),
-              pld20_sd          = ('pld20',      'std'),
-              freqfilms2_mean   = ('freqfilms2', 'mean'),
-              freqfilms2_sd     = ('freqfilms2', 'std'),
-              freqlemfilms2_mean= ('freqlemfilms2','mean'),
-              freqlemfilms2_sd  = ('freqlemfilms2','std'),
-              freqlemlivres_mean= ('freqlemlivres','mean'),
-              freqlemlivres_sd  = ('freqlemlivres','std'),
-              freqlivres_mean   = ('freqlivres', 'mean'),
-              freqlivres_sd     = ('freqlivres', 'std')
+              n_sd               = ('rt_ms',     'count'),
+              rt_ms_mean         = ('rt_ms',     'mean'),
+              rt_ms_sd           = ('rt_ms',     'std'),
+              nblettres_mean     = ('nblettres', 'mean'),
+              nblettres_sd       = ('nblettres', 'std'),
+              nbphons_mean       = ('nbphons',   'mean'),
+              nbphons_sd         = ('nbphons',   'std'),
+              old20_mean         = ('old20',     'mean'),
+              old20_sd           = ('old20',     'std'),
+              pld20_mean         = ('pld20',     'mean'),
+              pld20_sd           = ('pld20',     'std'),
+              freqfilms2_mean    = ('freqfilms2',   'mean'),
+              freqfilms2_sd      = ('freqfilms2',   'std'),
+              freqlemfilms2_mean = ('freqlemfilms2','mean'),
+              freqlemfilms2_sd   = ('freqlemfilms2','std'),
+              freqlemlivres_mean = ('freqlemlivres','mean'),
+              freqlemlivres_sd   = ('freqlemlivres','std'),
+              freqlivres_mean    = ('freqlivres',   'mean'),
+              freqlivres_sd      = ('freqlivres',   'std')
           )
           .reset_index()
           .rename(columns={"groupe": "groupe_sd"})
     )
 
-    # ── Stats par bloc de lettres ───────────────────────────────────────
+    # ─── Stats ByLetters ───────────────────────────────────────────────
     stats_blk = (
         df.groupby("letters_block")
           .agg(
-              n_sd              = ('rt_ms',      'count'),
-              rt_ms_mean        = ('rt_ms',      'mean'),
-              rt_ms_sd          = ('rt_ms',      'std'),
-              nblettres_mean    = ('nblettres',  'mean'),
-              nblettres_sd      = ('nblettres',  'std'),
-              nbphons_mean      = ('nbphons',    'mean'),
-              nbphons_sd        = ('nbphons',    'std'),
-              old20_mean        = ('old20',      'mean'),
-              old20_sd          = ('old20',      'std'),
-              pld20_mean        = ('pld20',      'mean'),
-              pld20_sd          = ('pld20',      'std'),
-              freqfilms2_mean   = ('freqfilms2', 'mean'),
-              freqfilms2_sd     = ('freqfilms2', 'std'),
-              freqlemfilms2_mean= ('freqlemfilms2','mean'),
-              freqlemfilms2_sd  = ('freqlemfilms2','std'),
-              freqlemlivres_mean= ('freqlemlivres','mean'),
-              freqlemlivres_sd  = ('freqlemlivres','std'),
-              freqlivres_mean   = ('freqlivres', 'mean'),
-              freqlivres_sd     = ('freqlivres', 'std')
+              n_sd               = ('rt_ms',     'count'),
+              rt_ms_mean         = ('rt_ms',     'mean'),
+              rt_ms_sd           = ('rt_ms',     'std'),
+              nblettres_mean     = ('nblettres', 'mean'),
+              nblettres_sd       = ('nblettres', 'std'),
+              nbphons_mean       = ('nbphons',   'mean'),
+              nbphons_sd         = ('nbphons',   'std'),
+              old20_mean         = ('old20',     'mean'),
+              old20_sd           = ('old20',     'std'),
+              pld20_mean         = ('pld20',     'mean'),
+              pld20_sd           = ('pld20',     'std'),
+              freqfilms2_mean    = ('freqfilms2',   'mean'),
+              freqfilms2_sd      = ('freqfilms2',   'std'),
+              freqlemfilms2_mean = ('freqlemfilms2','mean'),
+              freqlemfilms2_sd   = ('freqlemfilms2','std'),
+              freqlemlivres_mean = ('freqlemlivres','mean'),
+              freqlemlivres_sd   = ('freqlemlivres','std'),
+              freqlivres_mean    = ('freqlivres',   'mean'),
+              freqlivres_sd      = ('freqlivres',   'std')
           )
           .reset_index()
           .rename(columns={"letters_block": "letters_block_sd"})
@@ -153,9 +150,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # ─── Excel en mémoire ──────────────────────────────────────────────
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as wr:
-        df.to_excel       (wr, sheet_name="tirage",          index=False)
-        stats_grp.to_excel(wr, sheet_name="Stats_ByGroup",   index=False)
-        stats_blk.to_excel(wr, sheet_name="Stats_ByLetters", index=False)
+        df.to_excel       (wr, "tirage",          index=False)
+        stats_grp.to_excel(wr, "Stats_ByGroup",   index=False)
+        stats_blk.to_excel(wr, "Stats_ByLetters", index=False)
     buf.seek(0)
 
     # ─── Upload Blob ───────────────────────────────────────────────────
@@ -168,8 +165,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             overwrite=True,
             content_settings=ContentSettings(
                 content_type=("application/vnd.openxmlformats-officedocument."
-                              "spreadsheetml.sheet")
-            )
+                              "spreadsheetml.sheet"))
         )
     except Exception as exc:
         logging.exception("Blob upload")
