@@ -110,8 +110,7 @@ function pickFive(tag,feuille,used,F){
     if(tag==="LOW_PLD" && mPld>=st.m_pld20-CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(tag==="HIGH_PLD"&& mPld<=st.m_pld20+CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(!meanLpOK(samp,st) || !sdOK(samp,st,fq)) continue;
-    // ajoute le tag dans l'objet
-    samp.forEach(r=>r.groupe=tag);
+    samp.forEach(r=>r.groupe=tag);      // ajoute le tag
     return samp;
   }
   return null;
@@ -251,10 +250,8 @@ function runBlock(wordArr, phaseLabel, onFinish){
 
   const nextTrial = ()=>{
     if(trial>=wordArr.length){onFinish(results); return;}
-    const obj=wordArr[trial];
-    const w = obj.word || obj;
-    const grp=obj.groupe || null;
-    const len=obj.nblettres || w.length;
+    const obj=wordArr[trial];          // ← objet complet
+    const w  = obj.word || obj;        // pour l’affichage
     const mask="#".repeat(w.length);
     scr.textContent="+"; let frame=0, active=true;
 
@@ -286,7 +283,7 @@ function runBlock(wordArr, phaseLabel, onFinish){
         removeEventListener('keydown',trigger);
         if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
 
-        promptAnswer(Math.round(performance.now()-t0), w, grp, len);
+        promptAnswer(Math.round(performance.now()-t0), obj); // ← on envoie l’objet
       }
       addEventListener('keydown',trigger);
       if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
@@ -305,7 +302,7 @@ function runBlock(wordArr, phaseLabel, onFinish){
       ans.blur(); ans.style.display='none';
     
       results.push({
-       ...obj,                       // copie word, groupe, nblettres, nbphons…
+       ...obj,                       // word, groupe, nblettres, nbphons…
        rt_ms      : rt,
        response   : ans.value.trim(),
        phase      : phaseLabel,
@@ -334,7 +331,10 @@ function endExperiment(results){
     },
     body:JSON.stringify(results)
   })
-  .then(r=>scr.textContent=r.ok?"Merci !":"Erreur "+r.status)
+  .then(async r=>{
+      const txt = await r.text();                // ← affiche le message d’erreur éventuel
+      scr.textContent = r.ok ? "Merci !" : "Erreur "+r.status+" : "+txt;
+  })
   .catch(()=>scr.textContent="Erreur réseau");
 }
 
