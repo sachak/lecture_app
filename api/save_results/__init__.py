@@ -1,3 +1,30 @@
+# tout en haut du fichier
+logging.basicConfig(level=logging.INFO)
+
+…
+
+# juste après rows_main =
+rows_main = [r for r in data if r.get("phase") != "practice"]
+logging.info("Reçu %s lignes, dont %s lignes test",
+             len(data), len(rows_main))
+
+…
+
+# juste après cnx.commit()
+logging.info("INSERT OK – %s lignes écrites en SQL", len(rows_main))
+
+…
+
+# juste avant buf = io.BytesIO()
+logging.info("Calcul stats : %s colonnes numériques, %s lignes",
+             len(num_cols), len(df))
+
+…
+
+# juste après cnt.upload_blob(...)
+logging.info("Blob %s_results.xlsx uploadé dans %s",
+             pid, STO_CONT)
+
 import os, io, logging
 import pandas as pd
 import pyodbc
