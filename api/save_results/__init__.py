@@ -1,14 +1,14 @@
-import os, io, json, logging
+import os, io, logging
 import pandas as pd
 import pyodbc
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
 # ─── variables d’environnement ──────────────────────────────────────────
-SQL_CONN    = os.getenv("SQL_CONN")                  # chaîne ODBC
-API_SECRET  = os.getenv("API_SECRET")                # header x-api-secret
-STO_CONN    = os.getenv("STORAGE_CONN")              # chaîne connexion Storage
-STO_CONT    = os.getenv("STORAGE_CONTAINER", "results")
+SQL_CONN   = os.getenv("SQL_CONN")                   # chaîne ODBC
+API_SECRET = os.getenv("API_SECRET")                 # header x-api-secret
+STO_CONN   = os.getenv("STORAGE_CONN")               # chaîne connexion Storage
+STO_CONT   = os.getenv("STORAGE_CONTAINER", "results")
 
 # ─── helpers ────────────────────────────────────────────────────────────
 def letters_block(n: int) -> str:
@@ -21,19 +21,19 @@ def http_resp(code: int, body: str = "") -> func.HttpResponse:
     return func.HttpResponse(
         body, status_code=code,
         headers={
-          "Access-Control-Allow-Origin":"*",
-          "Access-Control-Allow-Methods":"POST,OPTIONS",
-          "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
+            "Access-Control-Allow-Origin":"*",
+            "Access-Control-Allow-Methods":"POST,OPTIONS",
+            "Access-Control-Allow-Headers":"Content-Type,x-api-secret"
         })
 
 # ─── Function entry point ───────────────────────────────────────────────
 def main(req: func.HttpRequest) -> func.HttpResponse:
 
-    # CORS pré-vol
+    # CORS pre-flight
     if req.method == "OPTIONS":
         return http_resp(204)
 
-    # Authentification secret
+    # Secret
     if API_SECRET and req.headers.get("x-api-secret") != API_SECRET:
         return http_resp(403, "Forbidden")
 
@@ -48,15 +48,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if not data or "participant" not in data[0]:
         return http_resp(400, "participant missing")
 
+    # Validation stricte de nblettres
+    for i, r in enumerate(data, 1):
+        if r.get("phase") != "practice" and r.get("nblettres") in (None, ""):
+            return http_resp(400, f"nblettres missing in item {i}")
+
     pid = str(data[0]["participant"]).strip() or "anon"
 
-    # ─── Filtrer les essais test uniquement (pas practice) ───────
+    # ─── Garder uniquement la phase test ────────────────────────────────
     test_data = [r for r in data if r.get("phase") != "practice"]
-
     if not test_data:
         return http_resp(200, "OK (practice only)")
 
-    # ─── insertion SQL (seulement le test) ────────────────────────
+    # ─── insertion SQL ──────────────────────────────────────────────────
     try:
         with pyodbc.connect(SQL_CONN, timeout=10) as cnx, cnx.cursor() as cur:
             for r in test_data:
@@ -73,49 +77,98 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     r.get("phase", ""),
                     r.get("participant", ""),
                     r.get("groupe", ""),
-                    r.get("nblettres")
+                    int(r["nblettres"])
                 )
             cnx.commit()
     except Exception as exc:
         logging.exception("SQL insert")
         return http_resp(500, f"DB error : {exc}")
 
-    # ─── création DataFrame (for .xlsx & stats, hors practice) ─────
+    # ─── DataFrame complet ──────────────────────────────────────────────
     df = pd.DataFrame(test_data)
     df["letters_block"] = df["nblettres"].apply(letters_block)
 
+    # Colonnes numériques prévues
+    num_cols = [
+        "rt_ms", "nblettres", "nbphons", "old20", "pld20",
+        "freqfilms2", "freqlemfilms2", "freqlemlivres", "freqlivres"
+    ]
+
+    # ── Stats par groupe ────────────────────────────────────────────────
     stats_grp = (
-        df.groupby("groupe")["rt_ms"]
-        .agg(['count', 'mean', 'std']).reset_index()
-        .rename(columns={'count':'n','mean':'rt_mean','std':'rt_sd'})
+        df.groupby("groupe")
+          .agg(
+              n_sd              = ('rt_ms',      'count'),
+              rt_ms_mean        = ('rt_ms',      'mean'),
+              rt_ms_sd          = ('rt_ms',      'std'),
+              nblettres_mean    = ('nblettres',  'mean'),
+              nblettres_sd      = ('nblettres',  'std'),
+              nbphons_mean      = ('nbphons',    'mean'),
+              nbphons_sd        = ('nbphons',    'std'),
+              old20_mean        = ('old20',      'mean'),
+              old20_sd          = ('old20',      'std'),
+              pld20_mean        = ('pld20',      'mean'),
+              pld20_sd          = ('pld20',      'std'),
+              freqfilms2_mean   = ('freqfilms2', 'mean'),
+              freqfilms2_sd     = ('freqfilms2', 'std'),
+              freqlemfilms2_mean= ('freqlemfilms2','mean'),
+              freqlemfilms2_sd  = ('freqlemfilms2','std'),
+              freqlemlivres_mean= ('freqlemlivres','mean'),
+              freqlemlivres_sd  = ('freqlemlivres','std'),
+              freqlivres_mean   = ('freqlivres', 'mean'),
+              freqlivres_sd     = ('freqlivres', 'std')
+          )
+          .reset_index()
+          .rename(columns={"groupe": "groupe_sd"})
     )
 
+    # ── Stats par bloc de lettres ───────────────────────────────────────
     stats_blk = (
-        df.groupby("letters_block")["rt_ms"]
-        .agg(['count', 'mean', 'std']).reset_index()
-        .rename(columns={'count':'n','mean':'rt_mean','std':'rt_sd'})
+        df.groupby("letters_block")
+          .agg(
+              n_sd              = ('rt_ms',      'count'),
+              rt_ms_mean        = ('rt_ms',      'mean'),
+              rt_ms_sd          = ('rt_ms',      'std'),
+              nblettres_mean    = ('nblettres',  'mean'),
+              nblettres_sd      = ('nblettres',  'std'),
+              nbphons_mean      = ('nbphons',    'mean'),
+              nbphons_sd        = ('nbphons',    'std'),
+              old20_mean        = ('old20',      'mean'),
+              old20_sd          = ('old20',      'std'),
+              pld20_mean        = ('pld20',      'mean'),
+              pld20_sd          = ('pld20',      'std'),
+              freqfilms2_mean   = ('freqfilms2', 'mean'),
+              freqfilms2_sd     = ('freqfilms2', 'std'),
+              freqlemfilms2_mean= ('freqlemfilms2','mean'),
+              freqlemfilms2_sd  = ('freqlemfilms2','std'),
+              freqlemlivres_mean= ('freqlemlivres','mean'),
+              freqlemlivres_sd  = ('freqlemlivres','std'),
+              freqlivres_mean   = ('freqlivres', 'mean'),
+              freqlivres_sd     = ('freqlivres', 'std')
+          )
+          .reset_index()
+          .rename(columns={"letters_block": "letters_block_sd"})
     )
 
-    # ─── Excel en mémoire ──────────────────────────────────────────
+    # ─── Excel en mémoire ──────────────────────────────────────────────
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as wr:
-        df.to_excel(wr, sheet_name="tirage", index=False)
-        stats_grp.to_excel(wr, sheet_name="Stats_ByGroup", index=False)
+        df.to_excel       (wr, sheet_name="tirage",          index=False)
+        stats_grp.to_excel(wr, sheet_name="Stats_ByGroup",   index=False)
         stats_blk.to_excel(wr, sheet_name="Stats_ByLetters", index=False)
     buf.seek(0)
 
-    # ─── upload Blob (un fichier par participant) ──────────────────
+    # ─── Upload Blob ───────────────────────────────────────────────────
     try:
         bs  = BlobServiceClient.from_connection_string(STO_CONN)
         cnt = bs.get_container_client(STO_CONT)
         cnt.upload_blob(
-            name = f"{pid}_results.xlsx",
-            data = buf.getvalue(),
-            overwrite = True,
-            content_settings = ContentSettings(
-              content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              )
+            name=f"{pid}_results.xlsx",
+            data=buf.getvalue(),
+            overwrite=True,
+            content_settings=ContentSettings(
+                content_type=("application/vnd.openxmlformats-officedocument."
+                              "spreadsheetml.sheet")
             )
         )
     except Exception as exc:
