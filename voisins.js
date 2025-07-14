@@ -43,6 +43,15 @@ const std      = a => {const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2)
 const pick     = (a,n)=>shuffled(a).slice(0,n);
 const toFloat  = v => typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
 
+// ---------- ANONYMOUS-ID : fonction et variable globale ----------
+const randomID = () =>
+  [...Array(6)]
+    .map(()=>"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+      .charAt(Math.floor(Math.random()*36)))
+    .join('');
+const PID = randomID();      // code anonyme attribué à ce participant
+// -----------------------------------------------------------------
+
 /********************************************************************
  * 2. LECTURE .XLSX + TIRAGE 80 MOTS
  ********************************************************************/
@@ -110,7 +119,6 @@ function pickFive(tag,feuille,used,F){
     if(tag==="LOW_PLD" && mPld>=st.m_pld20-CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(tag==="HIGH_PLD"&& mPld<=st.m_pld20+CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(!meanLpOK(samp,st) || !sdOK(samp,st,fq)) continue;
-    // ajoute le tag dans l'objet
     samp.forEach(r=>r.groupe=tag);
     return samp;
   }
@@ -195,7 +203,6 @@ function page_Incompatible(){
 }
 
 /* ---- Tirage auto puis instructions ---- */
-const PID = prompt("Identifiant participant :").trim().toUpperCase();
 
 let WORDS80=[];
 function startLoading(hzSel){
@@ -220,6 +227,8 @@ function startLoading(hzSel){
 
 function page_Intro(){
   page.innerHTML=`<h2>Instructions</h2>
+  <p>Code anonyme du participant : <strong>${PID}</strong><br>
+     (notez-le si vous souhaitez, plus tard, recevoir vos résultats).</p>
   <p>Croix 500 ms → mot bref → masque.</p>
   <p>Touchez l’écran ou barre ESPACE dès que vous reconnaissez le mot,<br>
      puis tapez-le (clavier virtuel sur mobile).</p>
@@ -337,11 +346,11 @@ function runBlock(wordArr, phaseLabel, onFinish){
       ans.blur(); ans.style.display='none'; vk.style.display='none';
 
       results.push({
-        ...obj,                 // word, groupe, nblettres, …
+        ...obj,
         rt_ms      : rt,
         response   : ans.value.trim(),
         phase      : phaseLabel,
-        participant: PID
+        participant: PID                     // ---------- ANONYMOUS-ID
       });
       trial++;
       nextTrial();
@@ -389,5 +398,5 @@ function buildVK(){
 /********************************************************************
  * 9. LANCEMENT
  ********************************************************************/
-buildVK();   // construit le clavier une fois pour toutes
+buildVK();      // construit le clavier une fois
 page_Hz();
