@@ -252,9 +252,7 @@ function runBlock(wordArr, phaseLabel, onFinish){
   const nextTrial = ()=>{
     if(trial>=wordArr.length){onFinish(results); return;}
     const obj=wordArr[trial];
-    const w = obj.word || obj;
-    const grp=obj.groupe || null;
-    const len=obj.nblettres || w.length;
+    const w   = obj.word || obj;
     const mask="#".repeat(w.length);
     scr.textContent="+"; let frame=0, active=true;
 
@@ -286,36 +284,68 @@ function runBlock(wordArr, phaseLabel, onFinish){
         removeEventListener('keydown',trigger);
         if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
 
-        // promptAnswer(Math.round(performance.now()-t0), w, grp, len); // ANCIEN
-        promptAnswer(Math.round(performance.now()-t0), obj); // CORRECTION
+        promptAnswer(Math.round(performance.now()-t0), obj);   // correction
       }
       addEventListener('keydown',trigger);
       if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
     }
   };
 
-  // function promptAnswer(rt, obj, grp, len){ // ANCIEN
-  function promptAnswer(rt, obj){ // CORRECTION
-    scr.textContent = "";
-    ans.value       = "";
+  /* ----------- PROMPT ANSWER (corrigé + clavier virtuel) ----------- */
+  function promptAnswer(rt, obj){
+    scr.textContent   = "";
+    ans.value         = "";
     ans.style.display = 'block';
-    ans.readOnly      = false;
-    vk.style.display  = 'none';
-    setTimeout(()=>ans.focus(),40); resizeScr();
-    
-    function finish(){
-      ans.blur(); ans.style.display='none';
-    
-      results.push({
-       ...obj,                       // copie word, groupe, nblettres, nbphons…
-       rt_ms      : rt,
-       response   : ans.value.trim(),
-       phase      : phaseLabel,
-       participant: PID
-     });
-      trial++; nextTrial();
+
+    let vkListener=null;
+
+    if(IS_TOUCH){                       // --- mobile / tactile
+      buildVK();
+      ans.readOnly     = true;          // bloque le clavier système
+      vk.style.display = 'block';
+
+      vkListener = e=>{
+        const k = e.target.closest('.key');
+        if(!k) return;
+        const ch = k.textContent;
+        if(ch === '←'){
+          ans.value = ans.value.slice(0,-1);
+        }else if(ch === '↵'){
+          finish();
+        }else{
+          ans.value += ch;
+        }
+      };
+      vk.addEventListener('click', vkListener);
+    }else{                              // --- desktop
+      ans.readOnly     = false;
+      vk.style.display = 'none';
     }
-    ans.onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault(); finish();} };
+
+    setTimeout(()=>ans.focus(),40);
+    resizeScr();
+
+    ans.onkeydown = e=>{
+      if(e.key==="Enter"){
+        e.preventDefault();
+        finish();
+      }
+    };
+
+    function finish(){
+      if(vkListener) vk.removeEventListener('click', vkListener);
+      ans.blur(); ans.style.display='none'; vk.style.display='none';
+
+      results.push({
+        ...obj,                 // word, groupe, nblettres, …
+        rt_ms      : rt,
+        response   : ans.value.trim(),
+        phase      : phaseLabel,
+        participant: PID
+      });
+      trial++;
+      nextTrial();
+    }
   }
 
   nextTrial();
@@ -341,21 +371,23 @@ function endExperiment(results){
 }
 
 /********************************************************************
- * 8. CLAVIER VIRTUEL (inchangé)
+ * 8. CLAVIER VIRTUEL
  ********************************************************************/
 function buildVK(){
-  if(vk.firstChild) return;
+  if(vk.firstChild) return;             // déjà construit
   const rows=["QWERTZUIOP","ASDFGHJKL","YXCVBNM","ÇÉÈÊÏÔ←↵"];
   rows.forEach(r=>{
     const d=document.createElement('div'); d.className='krow';
     [...r].forEach(ch=>{
       const b=document.createElement('button'); b.className='key';
       b.textContent=ch; d.appendChild(b);
-    }); vk.appendChild(d);
+    });
+    vk.appendChild(d);
   });
 }
 
 /********************************************************************
  * 9. LANCEMENT
  ********************************************************************/
+buildVK();   // construit le clavier une fois pour toutes
 page_Hz();
