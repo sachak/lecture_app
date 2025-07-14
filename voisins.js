@@ -20,11 +20,10 @@ const CFG = {
   MEAN_FACTOR_OLDPLD : .35,
   MEAN_DELTA     : {letters:.68, phons:.68},
   SD_MULT        : {letters:2, phons:2, old20:.28, pld20:.28, freq:1.9},
-  HZ             : null,            // défini après choix participant
+  HZ             : null,
 
-  // Paramètres API (à personnaliser)
+  // Paramètres API
   API_URL   : "/api/save_results",
-  API_KEY   : "",
   API_SECRET: "udzKkYgnwQnfs7LW2Oi3xwgfhDhYiucZaXZrV4sY"
 };
 
@@ -36,7 +35,8 @@ const page = $('#page');
 const scr  = $('#scr');
 const ans  = $('#ans');
 const vk   = $('#vk');
-const rng  = () => Math.random();
+
+const rng      = () => Math.random();
 const shuffled = a => [...a].sort(() => rng() - .5);
 const mean     = a => a.reduce((s,x)=>s+x,0)/a.length;
 const std      = a => {const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
@@ -110,7 +110,7 @@ function pickFive(tag,feuille,used,F){
     if(tag==="LOW_PLD" && mPld>=st.m_pld20-CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(tag==="HIGH_PLD"&& mPld<=st.m_pld20+CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
     if(!meanLpOK(samp,st) || !sdOK(samp,st,fq)) continue;
-    samp.forEach(r=>r.groupe=tag);      // ajoute le tag
+    samp.forEach(r=>r.groupe=tag);
     return samp;
   }
   return null;
@@ -250,8 +250,8 @@ function runBlock(wordArr, phaseLabel, onFinish){
 
   const nextTrial = ()=>{
     if(trial>=wordArr.length){onFinish(results); return;}
-    const obj=wordArr[trial];          // ← objet complet
-    const w  = obj.word || obj;        // pour l’affichage
+    const obj = wordArr[trial];              // objet complet
+    const w   = obj.word;                    // mot à afficher
     const mask="#".repeat(w.length);
     scr.textContent="+"; let frame=0, active=true;
 
@@ -283,31 +283,53 @@ function runBlock(wordArr, phaseLabel, onFinish){
         removeEventListener('keydown',trigger);
         if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
 
-        promptAnswer(Math.round(performance.now()-t0), obj); // ← on envoie l’objet
+        promptAnswer(Math.round(performance.now()-t0), obj);   // ← on envoie l’objet
       }
       addEventListener('keydown',trigger);
       if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
     }
   };
 
+  /* ---------------- PROMPT ANSWER + CLAVIER VIRTUEL ---------------- */
   function promptAnswer(rt, obj){
-    scr.textContent = "";
-    ans.value       = "";
+    scr.textContent   = "";
+    ans.value         = "";
     ans.style.display = 'block';
     ans.readOnly      = false;
     vk.style.display  = 'none';
-    setTimeout(()=>ans.focus(),40); resizeScr();
-    
+    resizeScr();
+    setTimeout(()=>ans.focus(),40);
+
+    /* --- gestion clavier virtuel pour écrans tactiles --- */
+    let vkHandler=null;
+    if(IS_TOUCH){
+      buildVK();
+      ans.readOnly     = true;       // on saisit via le clavier virtuel
+      vk.style.display = 'block';
+
+      vkHandler = e=>{
+        if(!e.target.classList.contains('key')) return;
+        const ch=e.target.textContent;
+        if(ch==="←"){ ans.value = ans.value.slice(0,-1); }
+        else if(ch==="↵"){ finish(); }
+        else              { ans.value += ch; }
+      };
+      vk.addEventListener('click', vkHandler);
+    }
+
+    /* --- valide la réponse --- */
     function finish(){
+      if(vkHandler) vk.removeEventListener('click',vkHandler);
+      vk.style.display='none';
       ans.blur(); ans.style.display='none';
-    
+
       results.push({
-       ...obj,                       // word, groupe, nblettres, nbphons…
-       rt_ms      : rt,
-       response   : ans.value.trim(),
-       phase      : phaseLabel,
-       participant: PID
-     });
+        ...obj,                 // word, groupe, nblettres, nbphons…
+        rt_ms      : rt,
+        response   : ans.value.trim(),
+        phase      : phaseLabel,
+        participant: PID
+      });
       trial++; nextTrial();
     }
     ans.onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault(); finish();} };
@@ -332,14 +354,14 @@ function endExperiment(results){
     body:JSON.stringify(results)
   })
   .then(async r=>{
-      const txt = await r.text();                // ← affiche le message d’erreur éventuel
+      const txt = await r.text();
       scr.textContent = r.ok ? "Merci !" : "Erreur "+r.status+" : "+txt;
   })
   .catch(()=>scr.textContent="Erreur réseau");
 }
 
 /********************************************************************
- * 8. CLAVIER VIRTUEL (inchangé)
+ * 8. CLAVIER VIRTUEL (construction)
  ********************************************************************/
 function buildVK(){
   if(vk.firstChild) return;
