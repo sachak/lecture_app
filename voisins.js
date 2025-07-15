@@ -249,9 +249,9 @@ function page_Intro(){
   page.innerHTML=`<h2>Instructions</h2>
   <p>Code anonyme du participant : <strong>${PID}</strong><br>
      (notez-le si vous souhaitez, plus tard, recevoir vos résultats).</p>
-  <p>Fixez la croix. Un mot apparaîtra brièvement, masqué par des ###, puis réapparaîtra en alternance, de plus en plus lentement.</p>
-  <p>Quand vous reconnaissez le mot, appuyez sur ESPACE ou touchez l’écran avec le doigt, tapez le mot, puis validez avec Entrée ⏎. Attention aux accents et pluriels.<p>
-  <p>Une phase d’essai avec 2 mots précède le test principal de 80 mots.</p>
+  <p>Fixez la croix. Un mot apparaîtra brièvement, masqué par des ###, puis réapparaîtra en alternance, de plus en plus lentement.
+Quand vous reconnaissez le mot, appuyez sur ESPACE ou touchez l’écran avec le doigt, tapez le mot, puis validez avec Entrée ⏎. Attention aux accents et pluriels.
+Une phase d’essai avec 2 mots précède le test principal de 80 mots.</p>
   <button id="startP">Commencer la familiarisation</button>`;
   $('#startP').onclick=page_Practice;
 }
