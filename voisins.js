@@ -176,6 +176,26 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
 /********************************************************************
  * 5. PHASES
  ********************************************************************/
+function page_Welcome(){
+  page.innerHTML = `
+    <h2>Bienvenue !</h2>
+    <p>
+      Merci de participer à cette expérience sur la reconnaissance de mots.
+      Veuillez lire attentivement les informations ci-dessous :
+    </p>
+    <ul style="text-align:left;margin:0 auto;max-width:640px">
+      <li>Les données collectées sont anonymes (code participant : généré automatiquement).</li>
+      <li>Vous pouvez quitter l’expérience à tout moment en fermant l’onglet.</li>
+      <li>Aucune information permettant de vous identifier n’est conservée.</li>
+    </ul>
+    <p>En cliquant sur <em>Je continue</em>, vous consentez au recueil de vos réponses.</p>
+
+    <button id="btnConsent">Je continue</button>
+  `;
+
+  $('#btnConsent').onclick = page_Hz;   // enchaîne sur la page de calibration
+}
+
 function page_Hz(){
   page.innerHTML=`
     <h2>Veuillez mesurer la fréquence de votre écran pour calibrer l’expérience.</h2>
@@ -418,5 +438,5 @@ function buildVK(){
 /********************************************************************
  * 9. LANCEMENT
  ********************************************************************/
-buildVK();      // construit le clavier une fois
-page_Hz();
+buildVK();           // construit le clavier une fois
+page_Welcome();      // <— c’est elle qui s’affichera d’abord
