@@ -179,7 +179,6 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
 function page_Welcome(){
   page.innerHTML = `
     <h2>Conformité éthique</h2>
-
     <ul style="text-align:left;margin:0 auto;max-width:700px">
       <li><strong>Aucun risque :</strong> Cette expérience ne présente aucun danger physique ni psychologique.</li>
       <li><strong>Participation volontaire :</strong> Vous êtes libre de participer ou de quitter l’expérience à tout moment.</li>
@@ -191,18 +190,15 @@ function page_Welcome(){
         </ul>
       </li>
     </ul>
-
     <h3>Contact</h3>
     <p>
       Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude :<br>
       <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a>  <!-- remplacez par l’adresse réelle -->
     </p>
-
     <p style="margin-top:24px">
       Sur la base des informations qui précèdent, pour confirmer votre accord sur les points mentionnés
       et débuter l'étude, cliquez sur « Je donne mon accord ».
     </p>
-
     <div style="margin-top:30px">
       <button id="btnOk" style="margin-right:20px">Je donne mon accord</button>
       <button id="btnNo">Je ne donne pas mon accord</button>
