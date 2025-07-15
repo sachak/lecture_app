@@ -192,10 +192,30 @@ function page_Hz(){
   $('#hzOther').onclick = page_Incompatible;
 }
 function mesureHz(){
-  const lbl=$('#hzVal'); lbl.textContent='Mesure…'; let f=0,t0=performance.now();
-  (function loop(){f++; if(f<120){requestAnimationFrame(loop);}else{
-    lbl.textContent='≈ '+(f*1000/(performance.now()-t0)).toFixed(1)+' Hz';
-  }})();
+  const lbl = $('#hzVal');
+  lbl.textContent = 'Mesure…';
+  let f = 0, t0 = performance.now();
+
+  (function loop(){
+    f++;
+    if (f < 120) {
+      requestAnimationFrame(loop);
+    } else {
+      // fréquence brute
+      const freq = f*1000/(performance.now()-t0);
+
+      // affichage arrondi 60 / 120 Hz
+      let txt;
+      if (freq >= 58.0 && freq <= 62.0) {
+        txt = '60 Hz';
+      } else if (freq >= 118.0 && freq <= 122.0) {
+        txt = '120 Hz';
+      } else {
+        txt = '≈ ' + freq.toFixed(1) + ' Hz';
+      }
+      lbl.textContent = txt;
+    }
+  })();
 }
 function page_Incompatible(){
   scr.style.display='none'; page.style.display='flex';
