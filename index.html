@@ -1,453 +1,68 @@
-/* ***************************************************************************
- * EXPÉRIENCE  –  Collecte de données vers Azure SQL (Function HTTP)
- * ***************************************************************************/
-'use strict';
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Expérience 3 – Reconnaissance de mots</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0">
 
-/********************************************************************
- * 0. CONFIGURATION
- ********************************************************************/
-const CFG = {
-  XLSX_FILE      : "Lexique.xlsx",
-  PRACTICE_WORDS : ["PAIN","EAU"],
-  TOUCH_TRIGGER  : true,
-  TAGS           : ["LOW_OLD","HIGH_OLD","LOW_PLD","HIGH_PLD"],
-  N_PER_FEUIL_TAG: 5,
-  MAX_TRY_TAG    : 1000,
-  MAX_TRY_FULL   : 1000,
-  NUM_BASE       : ["nblettres","nbphons","old20","pld20"],
-  CYCLE_MS       : 350,
-  CROSS_MS       : 500,
-  MEAN_FACTOR_OLDPLD : .35,
-  MEAN_DELTA     : {letters:.68, phons:.68},
-  SD_MULT        : {letters:2, phons:2, old20:.28, pld20:.28, freq:1.9},
-  HZ             : null,            // défini après choix participant
-
-  // Paramètres API (à personnaliser)
-  API_URL   : "/api/save_results",
-  API_KEY   : "",
-  API_SECRET: "udzKkYgnwQnfs7LW2Oi3xwgfhDhYiucZaXZrV4sY"
-};
-
-/********************************************************************
- * 1. OUTILS GÉNÉRAUX
- ********************************************************************/
-const $ = s => document.querySelector(s);
-const page = $('#page');
-const scr  = $('#scr');
-const ans  = $('#ans');
-const vk   = $('#vk');
-
-const rng       = () => Math.random();
-const shuffled  = a => [...a].sort(() => rng() - .5);
-const mean      = a => a.reduce((s,x)=>s+x,0)/a.length;
-const std       = a => {const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2)));};
-const pick      = (a,n)=>shuffled(a).slice(0,n);
-const toFloat   = v => typeof v==="number"?v:parseFloat(String(v).replace(/[\s,]/g,"."));
-
-// ---------- ANONYMOUS-ID ----------
-const randomID = () =>
-  [...Array(6)]
-    .map(()=>"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-      .charAt(Math.floor(Math.random()*36)))
-    .join('');
-const PID = randomID();
-// ----------------------------------
-
-/********************************************************************
- * 2. LECTURE .XLSX + TIRAGE 80 MOTS
- ********************************************************************/
-async function loadSheets(){
-  const data = await fetch(CFG.XLSX_FILE).then(r=>r.arrayBuffer());
-  const wb   = XLSX.read(data,{type:'array'});
-  const shNames = wb.SheetNames.filter(s=>s.toLowerCase().startsWith('feuil'));
-  if(shNames.length!==4) throw "Il faut exactement 4 feuilles Feuil1…Feuil4";
-
-  const feuilles={}, allFreq=new Set();
-  for(const sh of shNames){
-    const json = XLSX.utils.sheet_to_json(wb.Sheets[sh],{defval:null,raw:false});
-    const cols = Object.keys(json[0]).map(c=>c.trim().toLowerCase());
-    const need = ["ortho","old20","pld20","nblettres","nbphons"];
-    need.forEach(c=>{if(!cols.includes(c)) throw `Colonne ${c} manquante dans ${sh}`});
-    const freqCols = cols.filter(c=>c.startsWith('freq'));
-    freqCols.forEach(c=>allFreq.add(c));
-
-    const df=json.filter(r=>need.every(k=>r[k]!=null)).map(r=>{
-      const o={};
-      [...need,...freqCols].forEach(k=>o[k]=toFloat(r[k]));
-      o.ortho=String(r.ortho).toUpperCase();
-      return o;
-    });
-    const stats={};
-    CFG.NUM_BASE.forEach(c=>stats['m_'+c]=mean(df.map(r=>r[c])));
-    [...CFG.NUM_BASE,...freqCols].forEach(c=>stats['sd_'+c]=std(df.map(r=>r[c])));
-    feuilles[sh]={df,stats,freqCols};
-  }
-  feuilles.allFreqCols=[...allFreq];
-  return feuilles;
-}
-
-function masks(r,st){return{
-  LOW_OLD : r.old20 < st.m_old20,
-  HIGH_OLD: r.old20 > st.m_old20,
-  LOW_PLD : r.pld20 < st.m_pld20,
-  HIGH_PLD: r.pld20 > st.m_pld20
-};}
-
-function meanLpOK(sub,st){
-  return Math.abs(mean(sub.map(r=>r.nblettres))-st.m_nblettres)<=CFG.MEAN_DELTA.letters*st.sd_nblettres &&
-         Math.abs(mean(sub.map(r=>r.nbphons))-st.m_nbphons)<=CFG.MEAN_DELTA.phons*st.sd_nbphons;
-}
-function sdOK(sub,st,fq){
-  const v=a=>std(a);
-  return v(sub.map(r=>r.nblettres))<=st.sd_nblettres*CFG.SD_MULT.letters &&
-         v(sub.map(r=>r.nbphons))  <=st.sd_nbphons  *CFG.SD_MULT.phons   &&
-         v(sub.map(r=>r.old20))    <=st.sd_old20    *CFG.SD_MULT.old20   &&
-         v(sub.map(r=>r.pld20))    <=st.sd_pld20    *CFG.SD_MULT.pld20   &&
-         fq.every(c=>v(sub.map(r=>r[c]))<=st['sd_'+c]*CFG.SD_MULT.freq);
-}
-
-function pickFive(tag,feuille,used,F){
-  const {df,stats:st,freqCols:fq}=F[feuille];
-  const pool = df.filter(r=>masks(r,st)[tag] && !used.has(r.ortho));
-  if(pool.length < CFG.N_PER_FEUIL_TAG) return null;
-
-  for(let i=0;i<CFG.MAX_TRY_TAG;i++){
-    const samp = pick(pool, CFG.N_PER_FEUIL_TAG);
-    const mOld = mean(samp.map(r=>r.old20));
-    const mPld = mean(samp.map(r=>r.pld20));
-    if(tag==="LOW_OLD" && mOld>=st.m_old20-CFG.MEAN_FACTOR_OLDPLD*st.sd_old20) continue;
-    if(tag==="HIGH_OLD"&& mOld<=st.m_old20+CFG.MEAN_FACTOR_OLDPLD*st.sd_old20) continue;
-    if(tag==="LOW_PLD" && mPld>=st.m_pld20-CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
-    if(tag==="HIGH_PLD"&& mPld<=st.m_pld20+CFG.MEAN_FACTOR_OLDPLD*st.sd_pld20) continue;
-    if(!meanLpOK(samp,st) || !sdOK(samp,st,fq)) continue;
-    samp.forEach(r=>r.groupe=tag);
-    return samp;
-  }
-  return null;
-}
-
-async function buildSheet(){
-  const F = await loadSheets();
-  const shNames = Object.keys(F).filter(k=>k!=="allFreqCols");
-  for(let t=0;t<CFG.MAX_TRY_FULL;t++){
-    const take={}, groups=[]; shNames.forEach(sh=>take[sh]=new Set()); let ok=true;
-    for(const tag of CFG.TAGS){
-      const bloc=[];
-      for(const sh of shNames){
-        const sub = pickFive(tag, sh, take[sh], F);
-        if(!sub){ ok=false; break; }
-        bloc.push(...sub); sub.forEach(r=>take[sh].add(r.ortho));
-      }
-      if(!ok) break;
-      groups.push(shuffled(bloc));
+  <style>
+    html,body{
+      width:100vw;height:100vh;margin:0;background:#000;color:#fff;
+      font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation;
+      display:flex;flex-direction:column;align-items:center;justify-content:center
     }
-    if(ok) return groups.flat();
-  }
-  throw "Impossible de générer la liste de 80 mots.";
-}
+    #page{display:flex;flex-direction:column;align-items:center;text-align:center;gap:18px}
 
-/********************************************************************
- * 3. VARIABLES DÉRIVÉES DE LA FRÉQUENCE
- ********************************************************************/
-let FRAME_MS,CYCLE_F,CROSS_F,SCALE,START_F,STEP_F,IS_TOUCH;
-function setHz(hz){
-  CFG.HZ = hz;
-  FRAME_MS = 1000 / hz;
-  CYCLE_F  = Math.round(CFG.CYCLE_MS / FRAME_MS);
-  CROSS_F  = Math.round(CFG.CROSS_MS / FRAME_MS);
-  SCALE    = hz / 60;
-  START_F  = 1 * SCALE;
-  STEP_F   = 1 * SCALE;
-  IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
-}
-
-/********************************************************************
- * 4. RESIZE
- ********************************************************************/
-function resizeScr(){
-  const b=Math.min(innerWidth,innerHeight);
-  scr.style.fontSize = Math.max(Math.round(b*0.08),26)+'px';
-  ans.style.fontSize = Math.max(Math.round(b*0.054),20)+'px';
-  ans.style.width    = Math.min(innerWidth*0.7,650)+'px';
-}
-addEventListener('resize',resizeScr);
-addEventListener('orientationchange',resizeScr);
-addEventListener('load',()=>{setTimeout(resizeScr,80);});
-
-/********************************************************************
- * 5. PHASES
- ********************************************************************/
-
-/* ---------- page de consentement ---------- */
-function page_Ethique(){
-  scr.style.display  = 'none';
-  page.style.display = 'flex';
-
-  page.innerHTML = `
-    <h2>Conformité éthique</h2>
-    <p><strong>Aucun risque&nbsp;:</strong> Cette expérience ne présente aucun danger physique ni psychologique.</p>
-    <p><strong>Participation volontaire&nbsp;:</strong> Vous êtes libre de participer ou de quitter l’expérience à tout moment.</p>
-    <p><strong>Confidentialité et anonymat&nbsp;:</strong><br>
-       – Aucune donnée personnelle n’est collectée.<br>
-       – Les réponses sont enregistrées de manière strictement anonyme.<br>
-       – Les données recueillies sont utilisées uniquement à des fins de recherche scientifique.</p>
-    <p><strong>Contact&nbsp;:</strong><br>
-       Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude.</p>
-
-    <div style="margin-top:30px">
-      <button id="btnOk">Je donne mon accord</button>
-      <button id="btnNo">Je ne donne pas mon accord</button>
-    </div>`;
-
-  $('#btnOk').onclick = page_Hz;            // on continue
-  $('#btnNo').onclick = () => {
-    page.innerHTML = `
-      <h2>Merci</h2>
-      <p>Vous avez choisi de ne pas participer à cette étude.</p>`;
-  };
-}
-
-/* ---------- page de mesure des Hz ---------- */
-function page_Hz(){
-  page.innerHTML=`
-    <h2>1. Veuillez vérifier la fréquence de votre écran pour calibrer l’expérience.</h2>
-    <div id="hzVal" style="font-size:28px;">--</div>
-    <button id="mes">Mesurer</button>
-    <div style="margin-top:20px">
-      <button id="hz60">Utiliser 60&nbsp;Hz</button>
-      <button id="hz120">Utiliser 120&nbsp;Hz</button>
-      <button id="hzOther">Autre</button>
-    </div>`;
-  $('#mes').onclick   = mesureHz;
-  $('#hz60').onclick  = ()=>startLoading(60);
-  $('#hz120').onclick = ()=>startLoading(120);
-  $('#hzOther').onclick = page_Incompatible;
-}
-
-/* ---------- mesure de la fréquence ---------- */
-function mesureHz(){
-  const lbl = $('#hzVal');
-  lbl.textContent = 'Mesure…';
-  let f = 0, t0 = performance.now();
-
-  (function loop(){
-    f++;
-    if (f < 120){
-      requestAnimationFrame(loop);
-    } else {
-      const freq = f*1000/(performance.now()-t0); // Hz brut
-      let txt;
-      if (freq >= 58 && freq <= 62){
-        txt = '60 Hz';
-      } else if (freq >= 118 && freq <= 122){
-        txt = '120 Hz';
-      } else {
-        txt = '≈ ' + freq.toFixed(1) + ' Hz';
-      }
-      lbl.textContent = txt;
+    /* -------- SEULS les vrais boutons (pas .key) -------- */
+    button:not(.key){
+      font-size:22px;padding:8px 28px;border:none;border-radius:8px;
+      background:#444;color:#fff;margin:6px 8px;
     }
-  })();
-}
+    button:not(.key):active{background:#666}
 
-function page_Incompatible(){
-  scr.style.display='none'; page.style.display='flex';
-  page.innerHTML=`<h2>Désolé</h2><p>Cette expérience nécessite un écran 60&nbsp;Hz ou 120&nbsp;Hz.</p>`;
-}
-
-/* ---- Tirage auto puis instructions ---- */
-let WORDS80=[];
-function startLoading(hzSel){
-  setHz(hzSel);
-  page.innerHTML=`<h2>Préparation…</h2><p id="stat">Tirage aléatoire des 80 mots…</p>`;
-  buildSheet().then(list=>{
-    WORDS80 = list.map(r=>({
-      word            : r.ortho,
-      groupe          : r.groupe,
-      nblettres       : r.nblettres,
-      nbphons         : r.nbphons,
-      old20           : r.old20,
-      pld20           : r.pld20,
-      freqfilms2      : r.freqfilms2,
-      freqlemfilms2   : r.freqlemfilms2,
-      freqlemlivres   : r.freqlemlivres,
-      freqlivres      : r.freqlivres
-    }));
-    page_Intro();
-  }).catch(e=>{page.innerHTML='<p style="color:red">'+e+'</p>';});
-}
-
-function page_Intro(){
-  page.innerHTML=`<h2>Instructions</h2>
-    <p>Code anonyme du participant&nbsp;: <strong>${PID}</strong><br>
-       (notez-le si vous souhaitez, plus tard, recevoir vos résultats).</p>
-    <p>Fixez la croix. Un mot apparaîtra brièvement, masqué par des ###, puis réapparaîtra en alternance, de plus en plus lentement.
-    Quand vous reconnaissez le mot, appuyez sur&nbsp;ESPACE ou touchez l’écran, tapez le mot, puis validez avec Entrée&nbsp;⏎. Attention aux accents et pluriels.
-    Une phase d’essai avec 2 mots précède le test principal de 80 mots.</p>
-    <button id="startP">Commencer la familiarisation</button>`;
-  $('#startP').onclick = page_Practice;
-}
-
-function page_Practice(){
-  page.style.display='none'; scr.style.display='block';
-  runBlock(CFG.PRACTICE_WORDS,'practice',page_TestReady);
-}
-
-function page_TestReady(){
-  scr.style.display='none'; page.style.display='flex';
-  page.innerHTML=`<h2>Fin de l’entraînement</h2>
-    <button id="goFull">Commencer le test (plein écran)</button>`;
-  $('#goFull').onclick = () => {
-    document.documentElement.requestFullscreen?.();
-    page.style.display='none'; scr.style.display='block';
-    runBlock(shuffled(WORDS80),'main',endExperiment);
-  };
-}
-
-/********************************************************************
- * 6. RUN BLOCK  (présentation / réponses)
- ********************************************************************/
-function runBlock(wordArr, phaseLabel, onFinish){
-  let trial=0, results=[];
-
-  const nextTrial = ()=>{
-    if(trial>=wordArr.length){onFinish(results); return;}
-    const obj=wordArr[trial];
-    const w   = obj.word || obj;
-    const mask="#".repeat(w.length);
-    scr.textContent="+"; let frame=0, active=true;
-
-    const crossLoop=()=>{ if(!active) return;
-      if(++frame>=CROSS_F) startStimulus(); else requestAnimationFrame(crossLoop); };
-    requestAnimationFrame(crossLoop);
-
-    function startStimulus(){
-      let showF=START_F, subF=0, phase="show";
-      const t0=performance.now();
-
-      (function anim(){
-        if(!active) return;
-        if(phase==="show"){
-          if(subF===0) scr.textContent=w;
-          if(++subF>=showF){phase="mask"; subF=0; scr.textContent=mask;}
-        }else{
-          const hideF=Math.max(0,CYCLE_F-showF);
-          if(++subF>=hideF){showF=Math.min(showF+STEP_F,CYCLE_F); phase="show"; subF=0;}
-        }
-        requestAnimationFrame(anim);
-      })();
-
-      function trigger(e){
-        if(e instanceof KeyboardEvent && e.code!=="Space") return;
-        if(e instanceof PointerEvent) e.preventDefault();
-        if(!active) return; active=false;
-
-        removeEventListener('keydown',trigger);
-        if(CFG.TOUCH_TRIGGER) removeEventListener('pointerdown',trigger);
-
-        promptAnswer(Math.round(performance.now()-t0), obj);
-      }
-      addEventListener('keydown',trigger);
-      if(CFG.TOUCH_TRIGGER) addEventListener('pointerdown',trigger,{passive:false});
-    }
-  };
-
-  /* ---------- saisie de la réponse ---------- */
-  function promptAnswer(rt, obj){
-    scr.textContent   = "";
-    ans.value         = "";
-    ans.style.display = 'block';
-
-    let vkListener=null;
-
-    if(IS_TOUCH){                       // mobile
-      buildVK();
-      ans.readOnly     = true;
-      vk.style.display = 'block';
-
-      vkListener = e=>{
-        const k = e.target.closest('.key');
-        if(!k) return;
-        const ch = k.textContent;
-        if(ch === '←'){
-          ans.value = ans.value.slice(0,-1);
-        }else if(ch === '↵'){
-          finish();
-        }else{
-          ans.value += ch;
-        }
-      };
-      vk.addEventListener('click', vkListener);
-    }else{                              // desktop
-      ans.readOnly     = false;
-      vk.style.display = 'none';
+    /* sur tout petit écran, on empile les trois boutons */
+    @media(max-width:480px){
+      .btnrow{display:flex;flex-direction:column;align-items:center}
+      button:not(.key){width:85vw;max-width:320px;margin:5px 0}
     }
 
-    setTimeout(()=>ans.focus(),40);
-    resizeScr();
-
-    ans.onkeydown = e=>{
-      if(e.key==="Enter"){
-        e.preventDefault();
-        finish();
-      }
-    };
-
-    function finish(){
-      if(vkListener) vk.removeEventListener('click', vkListener);
-      ans.blur(); ans.style.display='none'; vk.style.display='none';
-
-      results.push({
-        ...obj,
-        rt_ms      : rt,
-        response   : ans.value.trim(),
-        phase      : phaseLabel,
-        participant: PID
-      });
-      trial++;
-      nextTrial();
+    /* ---------- zone stimuli / réponses ---------- */
+    #scr{
+      font-size:7vw;text-align:center;line-height:1.15;user-select:none;
+      text-shadow:0 2px 6px #222
     }
-  }
+    #ans{
+      display:none;font-size:5vw;width:70vw;max-width:92vw;text-align:center;background:#fff;
+      color:#000;border:none;padding:1.1vw .6vw;margin-top:2vh;border-radius:.5vw;outline:none
+    }
 
-  nextTrial();
-}
+    /* ---------- clavier virtuel ---------- */
+    #vk{display:none;flex-direction:column;align-items:center;margin-top:2vh}
+    .krow{display:flex;justify-content:center;margin:.2vh 0}
+    .key{
+      user-select:none;border:none;margin:0 .8vw;border-radius:.8vw;background:#333;color:#fff;
+      font-weight:600;font-size:6vw;min-width:8vw;padding:.6vh 0
+    }
+    .key:active{background:#555}
 
-/********************************************************************
- * 7. FIN D’EXPÉRIENCE — ENVOI
- ********************************************************************/
-function endExperiment(results){
-  scr.style.fontSize="min(6vw,48px)";
-  scr.textContent="Merci, enregistrement…";
+    @media (min-width:500px){.key{font-size:28px}}
+    @media (max-width:700px){#scr{font-size:14vw} #ans{font-size:8vw}}
+    @media (max-width:470px){#scr{font-size:18vw} #ans{font-size:11vw}}
+  </style>
 
-  fetch(CFG.API_URL,{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      ...(CFG.API_SECRET?{"x-api-secret":CFG.API_SECRET}:{})
-    },
-    body:JSON.stringify(results)
-  })
-  .then(r=>scr.textContent=r.ok?"Merci !":"Erreur "+r.status)
-  .catch(()=>scr.textContent="Erreur réseau");
-}
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+</head>
 
-/********************************************************************
- * 8. CLAVIER VIRTUEL
- ********************************************************************/
-function buildVK(){
-  if(vk.firstChild) return;             // déjà construit
-  const rows=["QWERTZUIOP","ASDFGHJKL","YXCVBNM","ÇÉÈÊÏÔ←↵"];
-  rows.forEach(r=>{
-    const d=document.createElement('div'); d.className='krow';
-    [...r].forEach(ch=>{
-      const b=document.createElement('button'); b.className='key';
-      b.textContent=ch; d.appendChild(b);
-    });
-    vk.appendChild(d);
-  });
-}
+<body tabindex="0">
+  <div id="page"></div>
+  <div id="scr"></div>
 
-/********************************************************************
- * 9. LANCEMENT
- ********************************************************************/
-buildVK();      // construit le clavier une fois
-page_Ethique(); // la page de consentement est la première
+  <input id="ans"
+         autocomplete="off" autocorrect="off"
+         autocapitalize="off" spellcheck="false">
+
+  <div id="vk"></div>
+
+  <script src="voisins.js"></script>
+</body>
+</html>
