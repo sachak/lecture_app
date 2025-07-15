@@ -214,6 +214,7 @@ function page_Welcome(){
       <button id="btnOk" style="flex:1 1 180px;min-width:150px;">Je donne mon accord</button>
       <button id="btnNo" style="flex:1 1 180px;min-width:150px;">Je ne donne pas mon accord</button>
     </div>
+    </div>
   `;
 
   /* 3. Gestion des boutons */
