@@ -213,7 +213,7 @@ function page_Welcome(){
     <div style="margin:32px 0;display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
       <button id="btnOk" style="flex:1 1 180px;min-width:150px;">Je donne mon accord</button>
       <button id="btnNo" style="flex:1 1 180px;min-width:150px;">Je ne donne pas mon accord</button>
-    </div>
+    <br>
     </div>
   `;
 
