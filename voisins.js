@@ -178,7 +178,7 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
  ********************************************************************/
 function page_Hz(){
   page.innerHTML=`
-    <h2>1. Vérification de la fréquence d’écran</h2>
+    <h2>1. Veuillez vérifier la fréquence de votre écran pour calibrer l’expérience.</h2>
     <div id="hzVal" style="font-size:28px;">--</div>
     <button id="mes">Mesurer</button>
     <div style="margin-top:20px">
