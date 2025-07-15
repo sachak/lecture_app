@@ -176,35 +176,6 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
 /********************************************************************
  * 5. PHASES
  ********************************************************************/
-/* ---------- page de consentement ---------- */
-function page_Ethique(){
-  scr.style.display  = 'none';
-  page.style.display = 'flex';
-
-  /* ############  CHAÎNE FERMÉE CORRECTEMENT  ############ */
-  page.innerHTML = `
-    <h2>Conformité éthique</h2>
-    <p><strong>Aucun risque&nbsp;:</strong> Cette expérience ne présente aucun danger physique ni psychologique.</p>
-    <p><strong>Participation volontaire&nbsp;:</strong> Vous êtes libre de participer ou de quitter l’expérience à tout moment.</p>
-    <p><strong>Confidentialité et anonymat&nbsp;:</strong><br>
-       – Aucune donnée personnelle n’est collectée.<br>
-       – Les réponses sont enregistrées de manière strictement anonyme.<br>
-       – Les données recueillies sont utilisées uniquement à des fins de recherche scientifique.</p>
-    <p><strong>Contact&nbsp;:</strong><br>
-       Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude.</p>
-
-    <div style="margin-top:30px">
-      <button id="btnOk">Je donne mon accord</button>
-      <button id="btnNo">Je ne donne pas mon accord</button>
-    </div>`;      // ← BACK-TICK DE FERMETURE !
-
-  /* actions sur les deux boutons */
-  $('#btnOk').onclick = page_Hz;             // on continue
-  $('#btnNo').onclick = () => {
-    page.innerHTML = `<h2>Merci</h2>
-      <p>Vous avez choisi de ne pas participer à cette étude.</p>`;
-  };
-}
 function page_Hz(){
   page.innerHTML=`
     <h2>Veuillez mesurer la fréquence de votre écran pour calibrer l’expérience.</h2>
@@ -448,5 +419,4 @@ function buildVK(){
  * 9. LANCEMENT
  ********************************************************************/
 buildVK();      // construit le clavier une fois
-page_Ethique(); // la page de consentement est désormais la première
-/ 
+page_Hz();
