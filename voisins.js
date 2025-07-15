@@ -178,12 +178,16 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
  ********************************************************************/
 function page_Welcome(){
 
-  /* 1. On autorise le défilement vertical et on aligne le contenu en haut */
-  page.style.justifyContent = 'flex-start';   // plus au centre verticalement
-  page.style.overflowY      = 'auto';         // scroll si nécessaire
-  page.style.padding        = '2rem 1rem';    // un peu d’air sur les côtés
+  /* 1. Mise en page spéciale pour le consentement */
+  page.style.display        = 'block';          // plus de flex
+  page.style.height         = 'auto';
+  page.style.minHeight      = '100vh';          // occupe toute la hauteur
+  page.style.boxSizing      = 'border-box';
+  page.style.overflowY      = 'auto';           // scroll vertical
+  page.style.padding        = '2rem 1rem calc(8rem + env(safe-area-inset-bottom,0px))';
+  //                           ↑↑↑ marge basse de 8rem + éventuel safe-area
 
-  /* 2. Contenu HTML */
+  /* 2. Contenu */
   page.innerHTML = `
     <h2 style="margin-top:0">Conformité éthique</h2>
 
@@ -202,7 +206,7 @@ function page_Welcome(){
     <h3>Contact</h3>
     <p style="max-width:700px;margin:0 auto;">
       Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude&nbsp;:<br>
-      <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a> <!-- remplacez par l’adresse réelle -->
+      <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a>
     </p>
 
     <p style="max-width:700px;margin:24px auto 0;">
@@ -213,18 +217,20 @@ function page_Welcome(){
     <div style="margin:32px 0;display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
       <button id="btnOk" style="flex:1 1 180px;min-width:150px;">Je donne mon accord</button>
       <button id="btnNo" style="flex:1 1 180px;min-width:150px;">Je ne donne pas mon accord</button>
-    <br>
     </div>
   `;
 
   /* 3. Gestion des boutons */
   $('#btnOk').onclick = () => {
-    /* On remet le style du conteneur comme sur les autres pages */
+    /* on restaure l’apparence « normale » du conteneur pour la suite */
+    page.style.display        = 'flex';
     page.style.justifyContent = 'center';
+    page.style.alignItems     = 'center';
+    page.style.height         = '100%';
     page.style.overflowY      = 'hidden';
     page.style.padding        = '0';
 
-    page_Hz();   // on passe à l’étape suivante (mesure des Hz)
+    page_Hz();   // étape suivante
   };
 
   $('#btnNo').onclick = () => {
