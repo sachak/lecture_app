@@ -197,8 +197,10 @@ Pour toute question ou information complémentaire, vous pouvez contacter le res
 </div>`;
 /* --- actions sur les deux boutons --- */
 $('#btnOk').onclick = page_Hz;           // on continue vers la page Hz
-$('#btnNo').onclick = ()=>{
-page.innerHTML = <h2>Merci</h2>       <p>Vous avez choisi de ne pas participer à cette étude.</p>;
+$('#btnNo').onclick = () => {
+  page.innerHTML = `
+    <h2>Merci</h2>
+    <p>Vous avez choisi de ne pas participer à cette étude.</p>`;
 };
 }
 function page_Hz(){
