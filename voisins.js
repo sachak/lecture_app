@@ -177,12 +177,20 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
  * 5. PHASES
  ********************************************************************/
 function page_Welcome(){
+
+  /* 1. On autorise le défilement vertical et on aligne le contenu en haut */
+  page.style.justifyContent = 'flex-start';   // plus au centre verticalement
+  page.style.overflowY      = 'auto';         // scroll si nécessaire
+  page.style.padding        = '2rem 1rem';    // un peu d’air sur les côtés
+
+  /* 2. Contenu HTML */
   page.innerHTML = `
-    <h2>Conformité éthique</h2>
-    <ul style="text-align:left;margin:0 auto;max-width:700px">
-      <li><strong>Aucun risque :</strong> Cette expérience ne présente aucun danger physique ni psychologique.</li>
-      <li><strong>Participation volontaire :</strong> Vous êtes libre de participer ou de quitter l’expérience à tout moment.</li>
-      <li><strong>Confidentialité et anonymat :</strong>
+    <h2 style="margin-top:0">Conformité éthique</h2>
+
+    <ul style="max-width:700px;text-align:left;line-height:1.4;margin:0 auto;">
+      <li><strong>Aucun risque&nbsp;:</strong> Cette expérience ne présente aucun danger physique ni psychologique.</li>
+      <li><strong>Participation volontaire&nbsp;:</strong> Vous êtes libre de participer ou de quitter l’expérience à tout moment.</li>
+      <li><strong>Confidentialité et anonymat&nbsp;:</strong>
         <ul>
           <li>Aucune donnée personnelle n’est collectée.</li>
           <li>Les réponses sont enregistrées de manière strictement anonyme.</li>
@@ -190,26 +198,36 @@ function page_Welcome(){
         </ul>
       </li>
     </ul>
+
     <h3>Contact</h3>
-    <p>
-      Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude :<br>
-      <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a>  <!-- remplacez par l’adresse réelle -->
+    <p style="max-width:700px;margin:0 auto;">
+      Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude&nbsp;:<br>
+      <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a> <!-- remplacez par l’adresse réelle -->
     </p>
-    <p style="margin-top:24px">
+
+    <p style="max-width:700px;margin:24px auto 0;">
       Sur la base des informations qui précèdent, pour confirmer votre accord sur les points mentionnés
       et débuter l'étude, cliquez sur « Je donne mon accord ».
     </p>
-    <div style="margin-top:30px">
-      <button id="btnOk" style="margin-right:20px">Je donne mon accord</button>
-      <button id="btnNo">Je ne donne pas mon accord</button>
+
+    <div style="margin:32px 0;display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
+      <button id="btnOk" style="flex:1 1 180px;min-width:150px;">Je donne mon accord</button>
+      <button id="btnNo" style="flex:1 1 180px;min-width:150px;">Je ne donne pas mon accord</button>
     </div>
   `;
 
-  /* --- actions des boutons -------------------------------------- */
-  $('#btnOk').onclick = page_Hz;     // accord : on poursuit le protocole
-  $('#btnNo').onclick = () => {      // refus : on stoppe tout
-    scr.style.display = 'none';
-    page.style.display = 'flex';
+  /* 3. Gestion des boutons */
+  $('#btnOk').onclick = () => {
+    /* On remet le style du conteneur comme sur les autres pages */
+    page.style.justifyContent = 'center';
+    page.style.overflowY      = 'hidden';
+    page.style.padding        = '0';
+
+    page_Hz();   // on passe à l’étape suivante (mesure des Hz)
+  };
+
+  $('#btnNo').onclick = () => {
+    page.style.overflowY = 'hidden';
     page.innerHTML = `
       <h2>Fin de l’expérience</h2>
       <p>Vous avez choisi de ne pas participer. Aucune donnée n’a été enregistrée.</p>
