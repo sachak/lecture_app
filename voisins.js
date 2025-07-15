@@ -178,24 +178,48 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
  ********************************************************************/
 function page_Welcome(){
   page.innerHTML = `
-    <h2>Bienvenue !</h2>
-    <p>
-      Merci de participer à cette expérience sur la reconnaissance de mots.
-      Veuillez lire attentivement les informations ci-dessous :
-    </p>
-    <ul style="text-align:left;margin:0 auto;max-width:640px">
-      <li>Les données collectées sont anonymes (code participant : généré automatiquement).</li>
-      <li>Vous pouvez quitter l’expérience à tout moment en fermant l’onglet.</li>
-      <li>Aucune information permettant de vous identifier n’est conservée.</li>
-    </ul>
-    <p>En cliquant sur <em>Je continue</em>, vous consentez au recueil de vos réponses.</p>
+    <h2>Conformité éthique</h2>
 
-    <button id="btnConsent">Je continue</button>
+    <ul style="text-align:left;margin:0 auto;max-width:700px">
+      <li><strong>Aucun risque :</strong> Cette expérience ne présente aucun danger physique ni psychologique.</li>
+      <li><strong>Participation volontaire :</strong> Vous êtes libre de participer ou de quitter l’expérience à tout moment.</li>
+      <li><strong>Confidentialité et anonymat :</strong>
+        <ul>
+          <li>Aucune donnée personnelle n’est collectée.</li>
+          <li>Les réponses sont enregistrées de manière strictement anonyme.</li>
+          <li>Les données recueillies sont utilisées uniquement à des fins de recherche scientifique.</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h3>Contact</h3>
+    <p>
+      Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude :<br>
+      <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a>  <!-- remplacez par l’adresse réelle -->
+    </p>
+
+    <p style="margin-top:24px">
+      Sur la base des informations qui précèdent, pour confirmer votre accord sur les points mentionnés
+      et débuter l'étude, cliquez sur « Je donne mon accord ».
+    </p>
+
+    <div style="margin-top:30px">
+      <button id="btnOk" style="margin-right:20px">Je donne mon accord</button>
+      <button id="btnNo">Je ne donne pas mon accord</button>
+    </div>
   `;
 
-  $('#btnConsent').onclick = page_Hz;   // enchaîne sur la page de calibration
+  /* --- actions des boutons -------------------------------------- */
+  $('#btnOk').onclick = page_Hz;     // accord : on poursuit le protocole
+  $('#btnNo').onclick = () => {      // refus : on stoppe tout
+    scr.style.display = 'none';
+    page.style.display = 'flex';
+    page.innerHTML = `
+      <h2>Fin de l’expérience</h2>
+      <p>Vous avez choisi de ne pas participer. Aucune donnée n’a été enregistrée.</p>
+    `;
+  };
 }
-
 function page_Hz(){
   page.innerHTML=`
     <h2>Veuillez mesurer la fréquence de votre écran pour calibrer l’expérience.</h2>
