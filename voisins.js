@@ -206,7 +206,7 @@ function page_Welcome(){
     <h3>Contact</h3>
     <p style="max-width:700px;margin:0 auto;">
       Pour toute question ou information complémentaire, vous pouvez contacter le responsable de l’étude&nbsp;:<br>
-      <a href="mailto:prenom.nom@univ.fr">prenom.nom@univ.fr</a>
+      <a href="mailto:prenom.nom@univ.fr">prenom.nom@etu.unige.ch</a>
     </p>
 
     <p style="max-width:700px;margin:24px auto 0;">
@@ -284,7 +284,7 @@ function mesureHz(){
 }
 function page_Incompatible(){
   scr.style.display='none'; page.style.display='flex';
-  page.innerHTML=`<h2>Désolé</h2><p>Cette expérience nécessite un écran 60 Hz ou 120 Hz.</p>`;
+  page.innerHTML=`<h2>Désolé</h2><p>Cette expérience nécessite un écran 60 Hz ou 120 Hz,essayez sur votre smartphone. Si c’était déjà le cas, veuillez désactiver le mode économie d’énergie et relancer le test.</p>`;
 }
 
 /* ---- Tirage auto puis instructions ---- */
@@ -485,3 +485,4 @@ function buildVK(){
  ********************************************************************/
 buildVK();           // construit le clavier une fois
 page_Welcome();      // <— c’est elle qui s’affichera d’abord
+
