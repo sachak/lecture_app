@@ -408,7 +408,7 @@ if p.page == "screen_test":
         if st.button("Autre ➜"):          go("incompatible")
 
 elif p.page == "incompatible":
-    st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz.")
+    st.error("Désolé, cette expérience nécessite un écran 60 Hz ou 120 Hz, essayez l’expérience sur votre smartphone. Si c’était déjà le cas, veuillez désactiver le mode économie d’énergie et relancer le test.")
 
 elif p.page == "intro":
     st.subheader("2. Présentation de la tâche")
