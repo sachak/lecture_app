@@ -52,6 +52,27 @@ const randomID = () =>
 const PID = randomID();      // code anonyme attribué à ce participant
 // -----------------------------------------------------------------
 
+// ---------- SWITCH DE THÈME (ajout) ----------
+function setTheme(mode){
+  const dark = mode === 'dark';
+  document.documentElement.style.backgroundColor = dark ? '#000' : '#fff';
+  document.body.style.backgroundColor = dark ? '#000' : '#fff';
+  document.body.style.color = dark ? '#fff' : '#000';
+  if (scr) {
+    scr.style.color = dark ? '#fff' : '#000';
+    scr.style.backgroundColor = 'transparent';
+  }
+  if (page) {
+    page.style.color = dark ? '#fff' : '#000';
+    page.style.backgroundColor = 'transparent';
+  }
+  if (ans) {
+    // pour garder une saisie lisible même en thème sombre
+    ans.style.backgroundColor = '#fff';
+    ans.style.color = '#000';
+  }
+}
+
 /********************************************************************
  * 2. LECTURE .XLSX + TIRAGE 80 MOTS
  ********************************************************************/
@@ -177,6 +198,7 @@ addEventListener('load',()=>{setTimeout(resizeScr,80);});
  * 5. PHASES
  ********************************************************************/
 function page_Welcome(){
+  setTheme('light');  // thème clair avant familiarisation
 
   /* 1. Mise en page spéciale pour le consentement */
   page.style.display        = 'block';          // plus de flex
@@ -242,6 +264,7 @@ function page_Welcome(){
   };
 }
 function page_Hz(){
+  setTheme('light');  // thème clair avant familiarisation
   page.innerHTML=`
     <h2>Veuillez mesurer la fréquence de votre écran pour calibrer l’expérience.</h2>
     <div id="hzVal" style="font-size:28px;">--</div>
@@ -283,6 +306,7 @@ function mesureHz(){
   })();
 }
 function page_Incompatible(){
+  setTheme('light');  // thème clair avant familiarisation
   scr.style.display='none'; page.style.display='flex';
   page.innerHTML=`<h2>Désolé</h2><p>Cette expérience nécessite un écran 60 Hz ou 120 Hz,essayez sur votre smartphone. Si c’était déjà le cas, veuillez désactiver le mode économie d’énergie et relancer le test.</p>`;
 }
@@ -291,6 +315,7 @@ function page_Incompatible(){
 
 let WORDS80=[];
 function startLoading(hzSel){
+  setTheme('light');  // thème clair avant familiarisation
   setHz(hzSel);
   page.innerHTML=`<h2>Préparation…</h2><p id="stat">Tirage aléatoire des 80 mots…</p>`;
   buildSheet().then(list=>{
@@ -311,6 +336,7 @@ function startLoading(hzSel){
 }
 
 function page_Intro(){
+  setTheme('light');  // thème clair avant familiarisation
   page.innerHTML=`<h2>Instructions</h2>
   <p>Code anonyme du participant : <strong>${PID}</strong><br>
      (notez-le si vous souhaitez, plus tard, recevoir vos résultats).</p>
@@ -322,11 +348,13 @@ Une phase d’essai avec 2 mots précède le test principal de 80 mots.</p>
 }
 
 function page_Practice(){
+  setTheme('dark');  // thème sombre à partir de la familiarisation
   page.style.display='none'; scr.style.display='block';
   runBlock(CFG.PRACTICE_WORDS,'practice',page_TestReady);
 }
 
 function page_TestReady(){
+  setTheme('dark');  // on reste en sombre après la familiarisation
   scr.style.display='none'; page.style.display='flex';
   page.innerHTML=`<h2>Fin de l’entraînement</h2>
   <button id="goFull">Commencer le test (plein écran)</button>`;
@@ -485,4 +513,3 @@ function buildVK(){
  ********************************************************************/
 buildVK();           // construit le clavier une fois
 page_Welcome();      // <— c’est elle qui s’affichera d’abord
-
